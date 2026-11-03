@@ -1,0 +1,19 @@
+{
+  "name": "telos-ai",
+  "version": "0.1.0",
+  "private": true,
+  "engines": { "node": ">=22" },
+  "scripts": {
+    "dev": "next dev",
+    "build": "next build",
+    "start": "next start",
+    "lint": "eslint .",
+    "typecheck": "tsc --noEmit",
+    "test": "vitest run",
+    "test:watch": "vitest",
+    "test:e2e": "playwright test",
+    "test:export": "node --test scripts/export-handoff.test.mjs",
+    "check": "npm run lint && npm run typecheck && npm test && npm run test:export && npm run build",
+    "export:handoff": "node scripts/export-handoff.mjs"
+  }
+}
