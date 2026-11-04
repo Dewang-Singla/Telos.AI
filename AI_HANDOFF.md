@@ -1,26 +1,44 @@
-# AI handoff
+# Continuation notes
 
-## Vision and instructions
-Build Telos AI, a general-purpose intent-driven social platform. Semantic retrieval AND complementary goals are essential. Never label keyword fallback as AI; never invent real users, messages, distances, expertise, or deployment success. Keep Docker and Kafka deferred. Use legitimate free resources only. Preserve checkpoints automatically.
+Deployment-readiness check: the current source passed an isolated Next.js 16.4.5 Turbopack production build, TypeScript compilation, page-data collection and static generation. It ran from backups/production-check-UNi9GE with a shared dependency junction and an isolation-only tracing/Turbopack root; the active localhost dev .next was not touched. Only public connection environment values were supplied. This is local build verification, not a successful Vercel deployment or cloud two-user realtime test. The previous full local suite remains 208 passed/11 cloud-only skipped. Gemini API interpretation/768-dimensional embeddings are implemented but no key/live provider call is configured or verified. Old/bot intents require indexing too before semantic matching can compare them. Git has no remote; GitHub/Vercel setup remains user action.
 
-## Inspection and architecture
-The workspace was initially empty. Requested stack: Next.js App Router/React/TypeScript/Tailwind/Lucide; Supabase Auth/PostgreSQL/Realtime; pgvector/PostGIS; configurable server-side AI. Preserve this architecture unless evidence justifies a change.
 
-## Files
-- `scripts/export-handoff.mjs`: dependency-free ZIP writer, CRC verification, exclusions, SHA-256 sidecar.
-- `scripts/export-handoff.test.mjs`: tests exclusions and ZIP integrity.
-- Required root docs describe status, setup, deployment, and next steps.
-- `backups/`: ignored, local source checkpoints. No secrets or dependency directories.
+Latest validation for migration 007/search reuse: 208 local tests passed across twelve files; 11 cloud-only tests skipped. Lint and TypeScript pass. Browser specifications include context-loading/reopen/edit/count regressions but were not executed here. Cloud migration 007 still needs to run once.
 
-## Current integrations
-None configured. No deployed URL. No runtime or database migrations at initial checkpoint. No credentials have been requested or written.
 
-## Continuing
-1. Read README.md, PROJECT_STATUS.md, NEXT_STEPS.md, DEPLOYMENT.md and actual code.
-2. Inspect Git status before modifications; preserve user changes.
-3. Install dependencies and run documented checks.
-4. Implement the next coherent milestone and validate it before unrelated changes.
-5. Update all handoff docs. Run `npm run export:handoff` after every significant feature and before ending.
-6. Commit working milestones when Git is configured; never force push or publish private source without authorization.
+Latest clarification: the user wants exact intent text visible to all qualified matches, including existing real-user intents. Matching text is no longer opt-in. Profile display remains optional; intents still do not become ordinary posts or globally readable rows. Migration 007 changes matching output and serializes equivalent active-save reuse. It must run once after 006; do not rerun 006. Frontend reopening now retains selected identity through context loading, blocks submission until ready, refreshes unchanged searches without a write, and updates changed text using the existing ID/constraints. New-search saves use a synchronous guard. Existing duplicate rows are not automatically deleted. DEMO_INTENTS.md lists exact bundled base pairs/suffix. User now sees seeded bots and has proven administrator/006 access; exact deployed counts are not independently verified.
 
-Actual code and executed tests override outdated documentation. Do not claim production readiness from source inspection alone.
+
+Latest follow-up: the user reports running 006 and entering a secret key, but the loader said Cannot access the demo schema. The old preflight hid every error behind one message and required direct profile SELECT. It now validates Auth administrator access, then probes seed_demo_content with target_id=null, expecting its Not a managed demo account guard before any write. `npm.cmd run seed:demo -- --check` runs only these checks and prints safe stage/code/status diagnostics. Do not ask for a secret in chat or rerun 006 blindly. The exact live cause remains unknown until the user's new check output. Nine loader/dataset tests pass; five preflight regressions were added.
+
+
+Six migrations are required. The cloud has user-reported 001-004. Apply 005 if pending, then 006 once; never rerun successful earlier migrations. Administrative seed_demo_content validates auth.users app metadata telos_demo=v1, refuses real profiles, fills content idempotently and keeps demo users offline. Only service_role can execute it. The protected is_demo profile flag cannot be set by normal users.
+
+The user requested bots explicitly. scripts/demo-data.mjs prepares 80 labeled fictional offline profiles, 160 intents and 240 varied text posts across 20 topic packs. Bots have city-centre demonstration coordinates. scripts/seed-demo.mjs uses Admin createUser (confirmed, login-banned, random discarded passwords, no emails), then the service-only content RPC. npm.cmd run seed:demo reads the project URL from .env.local and prompts for a secret/service-role key without displaying or saving it. Never request the key in chat or put it in public env. No admin key is available and live seeding has NOT run. --preview needs no credentials or network writes. Bots never auto-chat or accept requests. Local tests cover dataset validation, safe resume and actual SQL permissions/idempotence/offline enforcement.
+
+The user reports SMTP signup codes now work after correcting Username from Telos to the full Gmail address. Google setup was being completed but actual consent/callback is not confirmed. Login now offers resend only after email_not_confirmed (or expired confirmation callback), not routinely. Resend is for an unconfirmed signup, not login OTP. University delivery remains unresolved: check confirmation state, specific Auth log and spam/quarantine. Keep confirmation enabled. Authenticator MFA is not implemented.
+
+Latest full local checks: 197 tests passed, 11 cloud-only skipped; lint/typecheck passed. Browser specs for changed login/matches are updated but not executed because browser/native automation is unavailable. Keep the user's localhost:3000 server running; it has outbound network access and hidden temp-file logs. Verify exact workspace process identity before restarting, do not dump callback tokens/cookies from logs, and do not build against its active .next. Cloud demo provisioning, remaining authenticated features, Google consent, AI quality and deployment remain unverified. The user dislikes long setup pages: final migration/seed steps should be brief and inline. Create a secret-free backup before handoff.
+
+
+Read AGENTS.md, README.md, PROJECT_STATUS.md and DEPLOYMENT.md. Consult the installed Next.js docs before framework changes. Use npm.cmd/npx.cmd in Windows PowerShell.
+
+Email verification now has a numeric OTP form after password signup/resend, code retry/errors, a 60-second resend cooldown and a code-entry recovery path without resending. `verifySignupCode` uses Supabase `verifyOtp` with type email and requires a session before navigation. Google OAuth is implemented on login/signup; public Auth settings are checked on click to avoid sending users to a disabled provider. The SDK handles PKCE and the existing callback exchanges the code into cookies. `AUTH_SETUP.md` contains exact instructions and `supabase/templates/confirm-signup.html` is ready to paste into hosted Confirm sign up. The user reports working signup-code email after configuring SMTP/template. Google consent and university inbox delivery still need verification. No new auth migration and no Google secret in app env are required. Email verification is not a second MFA factor; authenticator MFA is not implemented.
+
+
+Keep readable bold sans-serif type and the green/cream identity, with concise functional labels. No promotional microcopy, intent-type examples, demo users, fake activity, match percentages or ranking explanations in the product. Profiles have general details, cover/photo, bio and optional custom fields. Messaging keeps a familiar split-chat layout.
+
+
+Migration 005 adds State and Country to profiles with empty defaults and owner column-update grants. Existing City values are preserved. All three location fields are independently optional, including country-only/state-only or entirely blank. The profile-location formatter joins only non-empty fields for profiles and matching cards. The user's cloud database has 001-004; 005 still needs to be run once. Profile writes with the new fields require 005. Do not rerun the earlier migrations.
+
+Intent management lives inside Find people; there is no separate intent navigation entry and `/intents` redirects to `/find`. Migration 004 adds independent one-way follows, counts and own follow lists, per-account relationship events, cancellation/removal, and All/Following/Connections chronological feed filters. Following does not grant private access or chat. Connections outlive intents. Removing a connection keeps historical messages readable but `can_message` and RLS deny new writes. Reconnecting creates a fresh thread. Blocking ends mutual follows/active connections; unblocking does not restore them. Profile actions show actual relationship states. Password recovery has a dedicated update-password screen and a whitelisted callback destination.
+
+The user also removed the separate People navigation section. One top Search (mobile search icon) opens `/search` with People/Posts tabs; `/discover` redirects there. Query/tab are linkable, stale responses are discarded, and both result types paginate through the existing APIs. Normal search must never query private intents. No extra migration is required for this change.
+
+AI is optional. The default role is open; Details can set manual constraints. Keep semantic retrieval and an honest keyword fallback. Never expose private text merely to explain a match. No service-role key is needed by the app.
+
+The user explicitly wants manual city search plus optional device detection, and profile location must remain optional. The profile city is editable display text; it is not a verified/current location. A shared device-location helper/hook now distinguishes permission/timeout/unavailable errors, cancels stale results on manual changes, and only auto-detects on Nearby enable when permission is already granted. Otherwise Use my location explicitly asks permission. Radius controls apply to coordinate searches; manual city lookup is name-based. GPS/browser coordinates can be inaccurate or spoofed. No precise location was sent to a reverse-geocoding service, and no new migration is needed.
+
+Actual local database tests now run migrations and RLS through PGlite with PostGIS and pgvector. They found and fixed owner-read policies for profile/post inserts. The bootstrap emulates auth.uid and storage catalog interfaces, not cloud Auth/Storage/Realtime. Do not call local database tests live Supabase verification.
+
+The user created the Mumbai Supabase project and reports migrations 001-004 succeeded. Public URL/key are configured only in ignored .env.local. Live read-only checks verified Auth settings, enabled email signup/confirmation, disabled Google, and denied anonymous profile/matching access. The user has now signed up and successfully logged in to real Supabase Auth. The first email reached the callback with a code but the session exchange failed; subsequent clicks returned otp_expired. The app had incorrectly labeled every handoff failure as an expired link. That message is corrected, and confirmation resend with a cooldown is now available. The exact cause of the first exchange failure was not logged; do not claim it was proven. Sign-in working with email confirmation required confirms the account's email was verified. No auth protection was disabled.

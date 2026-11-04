@@ -1,19 +1,49 @@
 {
   "name": "telos-ai",
-  "version": "0.1.0",
+  "version": "1.0.0",
   "private": true,
-  "engines": { "node": ">=22" },
+  "type": "module",
+  "engines": {
+    "node": ">=22"
+  },
   "scripts": {
-    "dev": "next dev",
+    "dev": "next dev --hostname 0.0.0.0",
     "build": "next build",
-    "start": "next start",
+    "start": "next start --hostname 0.0.0.0",
     "lint": "eslint .",
     "typecheck": "tsc --noEmit",
     "test": "vitest run",
-    "test:watch": "vitest",
     "test:e2e": "playwright test",
     "test:export": "node --test scripts/export-handoff.test.mjs",
-    "check": "npm run lint && npm run typecheck && npm test && npm run test:export && npm run build",
-    "export:handoff": "node scripts/export-handoff.mjs"
+    "seed:demo": "node scripts/seed-demo.mjs",
+    "export:handoff": "node scripts/export-handoff.mjs",
+    "check": "npm run lint && npm run typecheck && npm test && npm run test:export && npm run build"
+  },
+  "dependencies": {
+    "@supabase/ssr": "^0.8.0",
+    "@supabase/supabase-js": "^2.95.0",
+    "lucide-react": "^0.563.0",
+    "next": "^16.1.6",
+    "react": "^19.2.4",
+    "react-dom": "^19.2.4",
+    "zod": "^4.3.6"
+  },
+  "devDependencies": {
+    "@electric-sql/pglite": "^0.5.15",
+    "@electric-sql/pglite-pgvector": "^0.0.16",
+    "@electric-sql/pglite-postgis": "^0.2.15",
+    "@playwright/test": "^1.58.2",
+    "@tailwindcss/postcss": "^4.1.18",
+    "@types/node": "^24.10.0",
+    "@types/react": "^19.2.13",
+    "@types/react-dom": "^19.2.3",
+    "eslint": "^9.39.2",
+    "eslint-config-next": "^16.1.6",
+    "libpg-query": "^18.2.2",
+    "pgsql-parser": "^18.3.2",
+    "prettier": "^3.9.10",
+    "tailwindcss": "^4.1.18",
+    "typescript": "^5.9.3",
+    "vitest": "^4.0.18"
   }
 }
