@@ -67,12 +67,12 @@ async function session() {
       503,
     );
   const db = await serverClient();
-  const {
-    data: { user },
-    error,
-  } = await db.auth.getUser();
-  if (!user || error) throw new HTTPError("Sign in to use live Telos.", 401);
-  return { db, user };
+  const { data, error } = await db.auth.getClaims();
+  const id = uuid.safeParse(data?.claims?.sub);
+  if (error || !id.success || data?.claims?.role !== "authenticated")
+    throw new HTTPError("Sign in to use live Telos.", 401);
+  // getClaims verifies the JWT signature/expiry; database authorization remains RLS.
+  return { db, user: { id: id.data } };
 }
 function failure(error: unknown) {
   if (error instanceof z.ZodError)

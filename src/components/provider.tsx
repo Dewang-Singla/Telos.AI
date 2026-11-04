@@ -4,6 +4,7 @@ import {
   useCallback,
   useContext,
   useEffect,
+  useRef,
   useState,
   type ReactNode,
 } from "react";
@@ -11,6 +12,7 @@ import type { User } from "@supabase/supabase-js";
 import { browserClient, configured } from "@/lib/supabase/client";
 import { api } from "@/lib/api";
 import type { Profile } from "@/lib/types";
+import { shouldRefreshSession } from "@/lib/session-events";
 type State = {
   user: User | null;
   profile: Profile | null;
@@ -33,6 +35,9 @@ export function Provider({ children }: { children: ReactNode }) {
     [notice, setNotice] = useState("");
   const [onlineIds, setOnlineIds] = useState<string[]>([]);
   const [relationshipRevision, setRelationshipRevision] = useState(0);
+  const pendingRefresh = useRef<Promise<void> | null>(null);
+  const sessionVersion = useRef(0);
+  const activeId = useRef<string | null>(null);
   const relationshipsChanged = useCallback(
     () => setRelationshipRevision((r) => r + 1),
     [],
@@ -65,33 +70,72 @@ export function Provider({ children }: { children: ReactNode }) {
     };
   }, [user, relationshipsChanged]);
   const toast = useCallback((message: string) => setNotice(message), []);
-  const refresh = useCallback(async () => {
-    if (!configured) {
-      setLoading(false);
-      return;
-    }
-    try {
-      const db = browserClient();
-      const {
-        data: { user },
-        error,
-      } = await db.auth.getUser();
-      if (error && error.name !== "AuthSessionMissingError") throw error;
-      setUser(user);
-      setProfile(user ? await api<Profile | null>("profile") : null);
-      setError("");
-    } catch (e) {
-      setError((e as Error).message);
-    } finally {
-      setLoading(false);
-    }
+  const refresh = useCallback((): Promise<void> => {
+    if (pendingRefresh.current) return pendingRefresh.current;
+    const version = ++sessionVersion.current;
+    const task = (async () => {
+      if (!configured) {
+        setLoading(false);
+        return;
+      }
+      try {
+        // Browser state only. Every API request verifies claims independently.
+        const { data, error } = await browserClient().auth.getSession();
+        if (error) throw error;
+        if (version !== sessionVersion.current) return;
+        const next = data.session?.user || null;
+        activeId.current = next?.id || null;
+        setUser((old) =>
+          old?.id === next?.id && old?.updated_at === next?.updated_at
+            ? old
+            : next,
+        );
+        const nextProfile = next ? await api<Profile | null>("profile") : null;
+        if (version !== sessionVersion.current) return;
+        setProfile((old) =>
+          JSON.stringify(old) === JSON.stringify(nextProfile)
+            ? old
+            : nextProfile,
+        );
+        setError("");
+      } catch (e) {
+        if (version === sessionVersion.current) setError((e as Error).message);
+      } finally {
+        if (version === sessionVersion.current) setLoading(false);
+      }
+    })().finally(() => {
+      if (pendingRefresh.current === task) pendingRefresh.current = null;
+    });
+    pendingRefresh.current = task;
+    return task;
   }, []);
   useEffect(() => {
     void refresh();
     if (!configured) return;
-    const { data } = browserClient().auth.onAuthStateChange(() => {
-      setTimeout(() => void refresh(), 0);
-    });
+    const { data } = browserClient().auth.onAuthStateChange(
+      (event, session) => {
+        if (event === "SIGNED_OUT") {
+          sessionVersion.current++;
+          pendingRefresh.current = null;
+          activeId.current = null;
+          setUser(null);
+          setProfile(null);
+          setError("");
+          setLoading(false);
+        } else if (
+          shouldRefreshSession(
+            event,
+            activeId.current,
+            session?.user.id || null,
+          )
+        ) {
+          sessionVersion.current++;
+          pendingRefresh.current = null;
+          activeId.current = session?.user.id || null;
+          setTimeout(() => void refresh(), 0);
+        }
+      },
+    );
     return () => data.subscription.unsubscribe();
   }, [refresh]);
   useEffect(() => {

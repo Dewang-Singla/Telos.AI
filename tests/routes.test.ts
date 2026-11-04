@@ -4,7 +4,7 @@ const mocks = vi.hoisted(() => ({
   client: vi.fn(),
   rpc: vi.fn(),
   from: vi.fn(),
-  getUser: vi.fn(),
+  getClaims: vi.fn(),
 }));
 vi.mock("../src/lib/supabase/server", () => ({ serverClient: mocks.client }));
 import { GET, POST } from "../src/app/api/[resource]/route";
@@ -31,14 +31,14 @@ beforeEach(() => {
   vi.stubEnv("GEMINI_API_KEY", "");
   mocks.rpc.mockReset();
   mocks.from.mockReset();
-  mocks.getUser.mockReset();
+  mocks.getClaims.mockReset();
   mocks.client.mockReset();
-  mocks.getUser.mockResolvedValue({
-    data: { user: { id: currentUser } },
+  mocks.getClaims.mockResolvedValue({
+    data: { claims: { sub: currentUser, role: "authenticated" } },
     error: null,
   });
   mocks.client.mockResolvedValue({
-    auth: { getUser: mocks.getUser },
+    auth: { getClaims: mocks.getClaims },
     rpc: mocks.rpc,
     from: mocks.from,
   });
@@ -48,6 +48,24 @@ afterEach(() => {
   vi.unstubAllGlobals();
 });
 describe("authenticated API boundary", () => {
+  it.each([
+    [null, null],
+    [{ sub: currentUser, role: "anon" }, null],
+    [{ sub: "invalid-id", role: "authenticated" }, null],
+    [{ sub: currentUser, role: "authenticated" }, { code: "invalid_jwt" }],
+    [{ sub: currentUser, role: "authenticated" }, { code: "jwt_expired" }],
+  ])(
+    "rejects unverified, missing, expired or unauthorized claims before database work",
+    async (claims, error) => {
+      mocks.getClaims.mockResolvedValue({ data: { claims }, error });
+      expect(
+        (await request("presence", { session_id: session, active: true }))
+          .status,
+      ).toBe(401);
+      expect(mocks.rpc).not.toHaveBeenCalled();
+      expect(mocks.from).not.toHaveBeenCalled();
+    },
+  );
   it("updates the existing intent ID when editing a reopened search", async () => {
     mocks.rpc.mockResolvedValue({ data: source, error: null });
     const response = await request("intents", {
@@ -324,7 +342,7 @@ describe("authenticated API boundary", () => {
     });
   });
   it("does not execute presence writes for unauthenticated users", async () => {
-    mocks.getUser.mockResolvedValue({ data: { user: null }, error: null });
+    mocks.getClaims.mockResolvedValue({ data: { claims: null }, error: null });
     expect(
       (await request("presence", { session_id: session, active: true })).status,
     ).toBe(401);

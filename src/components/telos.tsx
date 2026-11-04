@@ -1,6 +1,7 @@
 "use client";
 import { useCallback, useEffect, useRef, useState } from "react";
 import Link from "next/link";
+import dynamic from "next/dynamic";
 import {
   ArrowLeft,
   Bell,
@@ -32,15 +33,30 @@ import type {
 import { useTelos } from "./provider";
 import { Avatar, Empty, Loading, Logo, Modal } from "./ui";
 import { FindPeople } from "./find-people";
-import { SearchView } from "./search-view";
 import { PostComposer, SocialPostCard } from "./posts";
-import {
-  Connections,
-  Messages,
-  Notifications,
-  ProfileView,
-  SettingsView,
-} from "./views";
+const SearchView = dynamic(
+  () => import("./search-view").then((m) => m.SearchView),
+  { loading: () => <Loading /> },
+);
+const Connections = dynamic(
+  () => import("./connections").then((m) => m.Connections),
+  { loading: () => <Loading /> },
+);
+const Messages = dynamic(() => import("./views").then((m) => m.Messages), {
+  loading: () => <Loading />,
+});
+const Notifications = dynamic(
+  () => import("./views").then((m) => m.Notifications),
+  { loading: () => <Loading /> },
+);
+const ProfileView = dynamic(
+  () => import("./views").then((m) => m.ProfileView),
+  { loading: () => <Loading /> },
+);
+const SettingsView = dynamic(
+  () => import("./views").then((m) => m.SettingsView),
+  { loading: () => <Loading /> },
+);
 
 const navigation: {
   id: string;
@@ -187,7 +203,9 @@ export function Telos({
     let cancelled = false;
     void Promise.all([
       api<Notification[]>("notifications"),
-      api<Intent[]>("intents"),
+      section === "profile"
+        ? api<Intent[]>("intents")
+        : Promise.resolve([] as Intent[]),
     ])
       .then(([notes, intents]) => {
         if (!cancelled) {
@@ -201,7 +219,7 @@ export function Telos({
     return () => {
       cancelled = true;
     };
-  }, [user, revision]);
+  }, [user, revision, section]);
   useEffect(() => {
     if (!user) return;
     const db = browserClient();

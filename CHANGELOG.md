@@ -1,5 +1,13 @@
 # Changelog
 
+## Session and page-loading overhead — 4 November 2026
+
+- Removed duplicate proxy authentication from API requests; handlers verify signed, unexpired authenticated JWT claims and still rely on database RLS. Page proxy uses verified claims and preserves refreshed cookies without caching.
+- Coalesced browser session/profile refreshes, ignored same-account sign-in/token-refresh notifications, kept stable user/profile objects, and guarded against stale responses after account changes. Browser session data is used only for UI; it does not authorize server actions.
+- Deferred loading chat/settings/profile/search modules and stopped fetching intent history on unrelated screens. Excluded source backups from TypeScript's project scan.
+- Selected Vercel's Mumbai function region to align with the existing Supabase project. No migration is required.
+- Verification: 225 local tests passed, 11 cloud-only cases skipped; lint/type checks and an isolated production build passed. Warm signed-out localhost pages measured roughly 50-70 ms after compilation; authenticated browser timings and deployed latency remain unverified.
+
 ## Matching context and saved-search reuse — 4 November 2026
 
 - Updated the matching contract per the user's clarification: all qualified matches show the exact matching description, including older real-user intents. Removed the matching-text switch and misleading Private history label. Show on profile remains separate and optional; normal search/Feed do not list raw intents.
