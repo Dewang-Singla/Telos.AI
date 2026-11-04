@@ -36,7 +36,7 @@ Private searches, social posts and keyword matching work without an AI key. Skip
 
 ```dotenv
 GEMINI_API_KEY=YOUR_PRIVATE_API_KEY
-GEMINI_TEXT_MODEL=gemini-2.5-flash-lite
+GEMINI_TEXT_MODEL=gemini-3.5-flash-lite
 GEMINI_EMBEDDING_MODEL=gemini-embedding-001
 MATCH_MIN_SIMILARITY=0.55
 ```

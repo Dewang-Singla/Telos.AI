@@ -90,7 +90,7 @@ export async function interpret(description: string): Promise<Interpretation> {
     ],
   };
   const data = await gemini(
-    process.env.GEMINI_TEXT_MODEL || "gemini-2.5-flash-lite",
+    process.env.GEMINI_TEXT_MODEL || "gemini-3.5-flash-lite",
     "generateContent",
     {
       systemInstruction: {

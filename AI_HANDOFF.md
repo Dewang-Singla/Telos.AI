@@ -1,5 +1,8 @@
 # Continuation notes
 
+GitHub/AI setup update: repository is https://github.com/Dewang-Singla/Telos.AI.git. Local main preserves both the original local history and remote initial README commit. The user saved GEMINI_API_KEY privately in ignored .env.local. A synthetic Gemini embedding request succeeded (768 dimensions). gemini-2.5-flash-lite returned HTTP 404 for this key, so the local setting and shipped default were changed to gemini-3.5-flash-lite; a live synthetic request with the full app JSON schema then succeeded. No key was printed or committed. This validates provider connectivity/schema, not end-to-end app matching quality. Existing/bot intents still need indexing before semantic comparisons can benefit. Push is being completed using existing local Git credentials; no new GitHub plugin connection was required.
+
+
 Deployment-readiness check: the current source passed an isolated Next.js 16.4.5 Turbopack production build, TypeScript compilation, page-data collection and static generation. It ran from backups/production-check-UNi9GE with a shared dependency junction and an isolation-only tracing/Turbopack root; the active localhost dev .next was not touched. Only public connection environment values were supplied. This is local build verification, not a successful Vercel deployment or cloud two-user realtime test. The previous full local suite remains 208 passed/11 cloud-only skipped. Gemini API interpretation/768-dimensional embeddings are implemented but no key/live provider call is configured or verified. Old/bot intents require indexing too before semantic matching can compare them. Git has no remote; GitHub/Vercel setup remains user action.
 
 
