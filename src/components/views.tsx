@@ -7,6 +7,7 @@ import {
   type FormEvent,
 } from "react";
 import Link from "next/link";
+import { latestMessage, mergeMessages } from "@/lib/chat-state";
 import {
   ArrowLeft,
   Bell,
@@ -30,7 +31,6 @@ import { browserClient } from "@/lib/supabase/client";
 import { profileSchema } from "@/lib/validation";
 import { profileLocation } from "@/lib/profile-location";
 import type {
-  Conversation,
   Intent,
   Message,
   Notification,
@@ -308,13 +308,21 @@ export function ProfileView({
 export { Connections } from "./connections";
 
 export function Messages() {
-  const { user, onlineIds, toast, relationshipRevision } = useTelos();
-  const [conversations, setConversations] = useState<Conversation[]>([]),
-    [selected, setSelected] = useState(""),
+  const {
+    user,
+    onlineIds,
+    toast,
+    conversations,
+    inboxLoading: loading,
+    inboxError,
+    refreshInbox: loadConversations,
+    readMessages,
+    setActiveChat,
+  } = useTelos();
+  const [selected, setSelected] = useState(""),
     [messages, setMessages] = useState<Message[]>([]),
     [body, setBody] = useState(""),
     [query, setQuery] = useState(""),
-    [loading, setLoading] = useState(false),
     [error, setError] = useState(""),
     [sending, setSending] = useState(false),
     [older, setOlder] = useState(false),
@@ -328,63 +336,51 @@ export function Messages() {
   const deepLinkHandled = useRef(false);
   useEffect(() => {
     current.current = selected;
-  }, [selected]);
-  const loadConversations = useCallback(async () => {
-    if (!user) return;
-    try {
-      const rows = await api<Conversation[]>("conversations");
-      setConversations(rows);
-      if (current.current && !rows.some((c) => c.id === current.current)) {
-        setSelected("");
-        setMessages([]);
-      }
-      if (!deepLinkHandled.current) {
-        deepLinkHandled.current = true;
-        const id = new URLSearchParams(window.location.search).get(
-          "conversation",
-        );
-        if (id && rows.some((c) => c.id === id)) setSelected(id);
-      }
-      setError("");
-    } catch (e) {
-      setError((e as Error).message);
-    } finally {
-      setLoading(false);
-    }
-  }, [user]);
-  useEffect(() => {
-    if (!user) return;
-    setLoading(true);
-    void loadConversations();
-    const db = browserClient();
-    const channel = db
-      .channel("inbox-updates")
-      .on(
-        "postgres_changes",
-        {
-          event: "INSERT",
-          schema: "public",
-          table: "notifications",
-          filter: `user_id=eq.${user.id}`,
-        },
-        () => void loadConversations(),
-      )
-      .subscribe();
-    const timer = setInterval(() => {
-      if (document.visibilityState === "visible") void loadConversations();
-    }, 30000);
-    return () => {
-      clearInterval(timer);
-      void db.removeChannel(channel);
-    };
-  }, [user, loadConversations, relationshipRevision]);
-  const read = useCallback(async (id: string) => {
-    await api("read", { id });
-    if (current.current === id)
-      setConversations((cs) =>
-        cs.map((c) => (c.id === id ? { ...c, unread: 0 } : c)),
+    if (selected)
+      window.history.replaceState(
+        null,
+        "",
+        `/messages?conversation=${selected}`,
       );
-  }, []);
+  }, [selected]);
+  useEffect(() => {
+    if (loading || !user) return;
+    if (
+      current.current &&
+      !conversations.some((c) => c.id === current.current)
+    ) {
+      current.current = "";
+      setSelected("");
+      setMessages([]);
+    }
+    if (!deepLinkHandled.current) {
+      deepLinkHandled.current = true;
+      const id = new URLSearchParams(window.location.search).get(
+        "conversation",
+      );
+      if (id && conversations.some((c) => c.id === id)) {
+        current.current = id;
+        setSelected(id);
+      }
+    }
+  }, [loading, user, conversations]);
+  useEffect(() => {
+    setActiveChat(selected || null);
+    return () => setActiveChat(null);
+  }, [selected, setActiveChat]);
+  const read = useCallback(
+    async (id: string, rows: Message[]) => {
+      const latest = latestMessage(rows);
+      if (
+        latest &&
+        current.current === id &&
+        document.visibilityState === "visible" &&
+        stickToBottom.current
+      )
+        await readMessages(id, latest.id);
+    },
+    [readMessages],
+  );
   useEffect(() => {
     if (!user || !selected) return;
     let cancelled = false;
@@ -397,21 +393,19 @@ export function Messages() {
       try {
         const rows = await api<Message[]>(`messages?conversation=${selected}`);
         if (cancelled) return;
-        setMessages((previous) => {
-          const merged = new Map(previous.map((m) => [m.id, m]));
-          for (const row of rows) merged.set(row.id, row);
-          return [...merged.values()].sort(
-            (a, b) =>
-              a.created_at.localeCompare(b.created_at) ||
-              a.id.localeCompare(b.id),
-          );
-        });
+        setMessages((previous) => mergeMessages(previous, rows));
         setOlder(rows.length === 50);
-        await read(selected);
+        await read(selected, rows);
       } catch (e) {
         if (!cancelled) setError((e as Error).message);
       }
     };
+    const onVisible = () => {
+      if (document.visibilityState === "visible") void fetchMessages();
+    };
+    document.addEventListener("visibilitychange", onVisible);
+    window.addEventListener("focus", onVisible);
+    window.addEventListener("online", onVisible);
     void fetchMessages();
     const db = browserClient();
     const channel = db
@@ -427,14 +421,10 @@ export function Messages() {
         (p) => {
           if (cancelled) return;
           const message = p.new as Message;
-          setMessages((ms) =>
-            ms.some((m) => m.id === message.id)
-              ? ms
-              : [...ms, message].sort((a, b) =>
-                  a.created_at.localeCompare(b.created_at),
-                ),
-          );
-          void read(selected).catch(() => {});
+          setMessages((ms) => mergeMessages(ms, [message]));
+          // A cursor acknowledges this delivered message, not a future arrival.
+          if (message.sender_id !== user.id)
+            void read(selected, [message]).catch(() => {});
           void loadConversations();
         },
       )
@@ -448,6 +438,9 @@ export function Messages() {
     }, 15000);
     return () => {
       cancelled = true;
+      document.removeEventListener("visibilitychange", onVisible);
+      window.removeEventListener("focus", onVisible);
+      window.removeEventListener("online", onVisible);
       clearInterval(timer);
       setLive(false);
       void db.removeChannel(channel);
@@ -479,9 +472,7 @@ export function Messages() {
       });
       if (current.current === id) {
         stickToBottom.current = true;
-        setMessages((ms) =>
-          ms.some((m) => m.id === message.id) ? ms : [...ms, message],
-        );
+        setMessages((ms) => mergeMessages(ms, [message]));
         setBody("");
       }
       void loadConversations();
@@ -502,7 +493,7 @@ export function Messages() {
       if (current.current !== id) return;
       if (rows.length)
         preserveHeight.current = history.current?.scrollHeight ?? null;
-      setMessages((ms) => [...rows, ...ms]);
+      setMessages((ms) => mergeMessages(ms, rows));
       setOlder(rows.length === 50);
     } catch (e) {
       toast((e as Error).message);
@@ -529,9 +520,9 @@ export function Messages() {
     )?.profile;
   return (
     <>
-      {error && (
+      {(error || inboxError) && (
         <div className="error-box" role="alert">
-          {error}
+          {error || inboxError}
           <button onClick={() => void loadConversations()}>Retry</button>
         </div>
       )}
@@ -577,6 +568,7 @@ export function Messages() {
                     className={`chat-list-item ${selected === c.id ? "selected" : ""}`}
                     key={c.id}
                     onClick={() => {
+                      current.current = c.id;
                       setSelected(c.id);
                       setBody("");
                     }}
@@ -636,6 +628,8 @@ export function Messages() {
                     stickToBottom.current =
                       node.scrollHeight - node.clientHeight - node.scrollTop <
                       100;
+                    if (stickToBottom.current)
+                      void read(selected, messages).catch(() => {});
                   }}
                   role="log"
                   aria-label="Messages"

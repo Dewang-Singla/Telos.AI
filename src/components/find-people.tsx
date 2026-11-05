@@ -14,11 +14,12 @@ import {
   Plus,
   RefreshCw,
   Search,
+  Bookmark,
   SlidersHorizontal,
   Users,
 } from "lucide-react";
 import { api } from "@/lib/api";
-import { intentDraft, intentEditDraft } from "@/lib/intent-input";
+import { intentDraft } from "@/lib/intent-input";
 import { profileLocation } from "@/lib/profile-location";
 import { browserClient } from "@/lib/supabase/client";
 import type { Intent, PersonMatch, Profile } from "@/lib/types";
@@ -66,15 +67,24 @@ export function FindPeople({
   const [historyMore, setHistoryMore] = useState(false),
     [historyBusy, setHistoryBusy] = useState(false);
   const [selected, setSelected] = useState<Intent | null>(null);
-  const [loadedId, setLoadedId] = useState("");
+  const [savingIntent, setSavingIntent] = useState(false);
+  const [restoring, setRestoring] = useState(false);
+  const [savedFingerprint, setSavedFingerprint] = useState("");
+  const fingerprint = JSON.stringify([
+    draft.trim(),
+    nearby,
+    city,
+    radius,
+    place?.latitude ?? null,
+    place?.longitude ?? null,
+  ]);
+  const [searched, setSearched] = useState<{
+    id: string;
+    saved: boolean;
+  } | null>(null);
   const selectedRef = useRef<Intent | null>(null);
-  const readyId = useRef("");
   const saving = useRef(false);
-  const selectedContext = useRef<{
-    latitude: number | null;
-    longitude: number | null;
-    radius_km: number;
-  }>({ latitude: null, longitude: null, radius_km: 25 });
+  const draftVersion = useRef(0);
   const activate = useCallback((intent: Intent | null) => {
     selectedRef.current = intent;
     setSelected(intent);
@@ -118,7 +128,7 @@ export function FindPeople({
   );
   const find = useCallback(
     async (offset = 0, quiet = false) => {
-      if (!user || !selectedId || loadedId !== selectedId) return;
+      if (!user || !searched) return;
       if (nearby && !place && !city.trim()) {
         setMatches([]);
         setHasMore(false);
@@ -129,15 +139,18 @@ export function FindPeople({
       if (!quiet) setBusy(true);
       setError("");
       try {
-        const people = await api<PersonMatch[]>("matches", {
-          id: selectedId,
-          nearby,
-          latitude: place?.latitude ?? null,
-          longitude: place?.longitude ?? null,
-          city,
-          radius,
-          offset,
-        });
+        const people = await api<PersonMatch[]>(
+          searched.saved ? "matches" : "search-matches",
+          {
+            id: searched.id,
+            nearby,
+            latitude: place?.latitude ?? null,
+            longitude: place?.longitude ?? null,
+            city,
+            radius,
+            offset,
+          },
+        );
         if (version !== request.current) return;
         setMatches((old) =>
           offset
@@ -159,13 +172,13 @@ export function FindPeople({
         if (version === request.current) setBusy(false);
       }
     },
-    [user, selectedId, loadedId, nearby, place, city, radius],
+    [user, searched, nearby, place, city, radius],
   );
   useEffect(() => {
     void loadMine();
   }, [loadMine, revision]);
   useEffect(() => {
-    if (!selectedId) {
+    if (!searched) {
       setMatches([]);
       setBusy(false);
       setHasMore(false);
@@ -176,7 +189,7 @@ export function FindPeople({
       clearTimeout(timer);
       invalidate();
     };
-  }, [find, selectedId, revision, invalidate]);
+  }, [find, searched, revision, invalidate]);
   useEffect(() => {
     if (!user) return;
     const db = browserClient();
@@ -185,7 +198,6 @@ export function FindPeople({
       clearTimeout(timer);
       timer = setTimeout(() => {
         void find(0, true);
-        void loadMine();
       }, 400);
     };
     const channel = db
@@ -226,9 +238,10 @@ export function FindPeople({
       setComposer(true);
       return;
     }
+    draftVersion.current++;
+    setSearched(null);
+    setRestoring(true);
     activate(intent);
-    readyId.current = "";
-    setLoadedId("");
     request.current++;
     setDraft(intent.description);
     setCity(intent.city);
@@ -244,25 +257,58 @@ export function FindPeople({
         radius_km: number;
       }>(`intent-context?id=${intent.id}`);
       if (contextVersion !== contextRequest.current) return;
-      selectedContext.current = context;
       setRadius(context.radius_km);
       setPlace(
         context.latitude !== null && context.longitude !== null
           ? { latitude: context.latitude, longitude: context.longitude }
           : null,
       );
-      readyId.current = intent.id;
-      setLoadedId(intent.id);
+      setSearched({ id: intent.id, saved: true });
+      setSavedFingerprint(
+        JSON.stringify([
+          intent.description.trim(),
+          nearby,
+          intent.city,
+          context.radius_km,
+          context.latitude,
+          context.longitude,
+        ]),
+      );
     } catch (e) {
       if (contextVersion === contextRequest.current)
         setError((e as Error).message);
+    } finally {
+      if (contextVersion === contextRequest.current) setRestoring(false);
     }
   }
   async function locate(onlyIfAllowed = false) {
+    clearResults();
     if (await requestLocation(onlyIfAllowed)) {
       setCity("");
       setError("");
     }
+  }
+  function currentDraft() {
+    const body = intentDraft(
+      draft,
+      nearby && place ? { ...place, city } : null,
+    );
+    if (nearby && city.trim() && !place) {
+      body.city = city.trim();
+      body.mode = "hybrid";
+    }
+    body.radius_km = radius;
+    return body;
+  }
+  function clearResults() {
+    draftVersion.current++;
+    contextRequest.current++;
+    setRestoring(false);
+    request.current++;
+    setSearched(null);
+    setMatches([]);
+    setHasMore(false);
+    setBusy(false);
   }
   async function submit(e: FormEvent) {
     e.preventDefault();
@@ -274,63 +320,73 @@ export function FindPeople({
       window.location.assign("/settings");
       return;
     }
-    if (saving.current) return;
-    const active = selectedRef.current;
-    if (active && readyId.current !== active.id) return;
+    if (saving.current || restoring) return;
     if (nearby && !place && !city.trim()) {
       setError("Use your location or enter a city before searching nearby.");
-      return;
-    }
-    if (active && active.description.trim() === draft.trim()) {
-      void find();
       return;
     }
     saving.current = true;
     setCreating(true);
     setError("");
+    const version = ++draftVersion.current;
+    contextRequest.current++;
+    request.current++;
+    setSearched(null);
+    setMatches([]);
     try {
-      const body = active
-        ? intentEditDraft(draft, active, selectedContext.current)
-        : intentDraft(draft, nearby && place ? { ...place, city } : null);
-      if (!active && nearby && city && !place) {
-        body.city = city;
-        body.mode = "hybrid";
-      }
-      const result = await api<{ id: string }>("intents", {
-        ...body,
-        radius_km: radius,
-        id: active?.id,
-        automatic: !active,
-      });
-      const rows = await loadMine();
-      activate(
-        rows?.find((row) => row.id === result.id) || {
-          ...body,
-          id: result.id,
-          user_id: user.id,
-          profile,
-          status: "active",
-          created_at: active?.created_at || new Date().toISOString(),
-        },
-      );
-      readyId.current = result.id;
-      setLoadedId(result.id);
-      selectedContext.current = {
-        latitude: body.latitude,
-        longitude: body.longitude,
-        radius_km: body.radius_km,
-      };
-      setMatches([]);
+      // Always interpret the current text; inferred roles from a saved search
+      // must never carry into a different draft.
+      const result = await api<{ id: string }>("search", currentDraft());
+      if (version !== draftVersion.current) return;
+      setSearched({ id: result.id, saved: false });
       if (window.matchMedia("(max-width:760px)").matches)
         resultsElement.current?.scrollIntoView({
           behavior: "smooth",
           block: "start",
         });
     } catch (e) {
-      setError((e as Error).message);
+      if (version === draftVersion.current) setError((e as Error).message);
     } finally {
       saving.current = false;
       setCreating(false);
+    }
+  }
+  async function saveIntent() {
+    if (!user) {
+      window.location.assign("/login");
+      return;
+    }
+    if (!profile) {
+      window.location.assign("/settings");
+      return;
+    }
+    if (saving.current || restoring || savedFingerprint === fingerprint) return;
+    if (nearby && !place && !city.trim()) {
+      setError("Use your location or enter a city before saving nearby.");
+      return;
+    }
+    saving.current = true;
+    setSavingIntent(true);
+    setError("");
+    const version = draftVersion.current;
+    try {
+      const body = currentDraft();
+      const result = await api<{ id: string }>("intents", {
+        ...body,
+        automatic: true,
+      });
+      const rows = await loadMine();
+      if (version === draftVersion.current) {
+        const saved = rows?.find((row) => row.id === result.id);
+        if (saved) activate(saved);
+        setSavedFingerprint(fingerprint);
+      }
+      toast("Intent saved.");
+    } catch (e) {
+      setError((e as Error).message);
+    } finally {
+      saving.current = false;
+      setSavingIntent(false);
     }
   }
   async function status(
@@ -342,10 +398,8 @@ export function FindPeople({
       await api("status", { id: intent.id, status: value });
       if (intent.id === selectedId && value !== "active") {
         contextRequest.current++;
-        readyId.current = "";
-        setLoadedId("");
         activate(null);
-        setMatches([]);
+        clearResults();
       }
       await loadMine();
       setMenu("");
@@ -355,10 +409,8 @@ export function FindPeople({
   }
   function newSearch() {
     if (saving.current) return;
-    request.current++;
+    clearResults();
     activate(null);
-    readyId.current = "";
-    setLoadedId("");
     setDraft("");
     setMatches([]);
     setError("");
@@ -373,7 +425,12 @@ export function FindPeople({
     <div className="private-intents">
       {mine.map((intent) => (
         <article
-          className={selectedId === intent.id ? "selected" : ""}
+          className={
+            selectedId === intent.id &&
+            selected?.description.trim() === draft.trim()
+              ? "selected"
+              : ""
+          }
           key={intent.id}
         >
           <button
@@ -486,7 +543,11 @@ export function FindPeople({
             required
             minLength={3}
             value={draft}
-            onChange={(e) => setDraft(e.target.value)}
+            onChange={(e) => {
+              contextRequest.current++;
+              clearResults();
+              setDraft(e.target.value);
+            }}
           />
           <div className="search-settings">
             <button
@@ -495,6 +556,7 @@ export function FindPeople({
               role="switch"
               aria-checked={nearby}
               onClick={() => {
+                clearResults();
                 const enabled = !nearby;
                 setNearby(enabled);
                 setError("");
@@ -517,9 +579,7 @@ export function FindPeople({
                   window.location.assign("/login");
                   return;
                 }
-                setEdit(
-                  selected ? { ...selected, description: draft } : undefined,
-                );
+                setEdit(undefined);
                 setComposer(true);
               }}
             >
@@ -533,6 +593,7 @@ export function FindPeople({
                 placeholder="City"
                 value={city}
                 onChange={(e) => {
+                  clearResults();
                   setCity(e.target.value);
                   setPlace(null);
                   setError("");
@@ -542,7 +603,10 @@ export function FindPeople({
                 aria-label="Radius"
                 value={place ? radius : "city"}
                 disabled={!place}
-                onChange={(e) => setRadius(Number(e.target.value))}
+                onChange={(e) => {
+                  clearResults();
+                  setRadius(Number(e.target.value));
+                }}
               >
                 {!place && (
                   <option value="city">
@@ -580,10 +644,7 @@ export function FindPeople({
           <button
             className="primary-button full search-submit"
             disabled={
-              creating ||
-              locating ||
-              selectedId !== loadedId ||
-              draft.trim().length < 3
+              creating || restoring || locating || savingIntent || draft.trim().length < 3
             }
           >
             {creating ? (
@@ -592,6 +653,26 @@ export function FindPeople({
               <Search size={21} />
             )}
             Find people
+          </button>
+          <button
+            type="button"
+            className="secondary-button full save-intent-button"
+            disabled={
+              creating ||
+              savingIntent ||
+              restoring ||
+              locating ||
+              draft.trim().length < 3 ||
+              savedFingerprint === fingerprint
+            }
+            onClick={() => void saveIntent()}
+          >
+            {savingIntent ? (
+              <Loader2 className="spin" size={19} />
+            ) : (
+              <Bookmark size={19} />
+            )}
+            {savedFingerprint === fingerprint ? "Saved" : "Save intent"}
           </button>
         </form>
         <div className="search-history-heading">
@@ -615,7 +696,7 @@ export function FindPeople({
       <section className="people-results" ref={resultsElement}>
         <header>
           <h2>People</h2>
-          {selectedId && (
+          {searched && (
             <button
               className="icon-button"
               aria-label="Refresh matches"
@@ -691,7 +772,12 @@ export function FindPeople({
               )}
               <button
                 className="primary-button"
-                onClick={() => onConnect(person.profile, selectedId)}
+                onClick={() =>
+                  onConnect(
+                    person.profile,
+                    searched?.saved ? searched.id : undefined,
+                  )
+                }
               >
                 Connect
               </button>
@@ -700,11 +786,11 @@ export function FindPeople({
         )}
         {!creating && !busy && !matches.length && !error && (
           <Empty
-            icon={selectedId ? <Users /> : <Search />}
+            icon={searched ? <Users /> : <Search />}
             title={
               nearby && !place && !city.trim()
                 ? "Choose a location"
-                : selectedId
+                : searched
                   ? "No matches yet"
                   : "Start a search"
             }

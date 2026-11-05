@@ -343,7 +343,7 @@ export function IntentComposer({
             ) : existing ? (
               "Save"
             ) : (
-              "Find people"
+              "Save intent"
             )}
           </button>
         </footer>

@@ -115,6 +115,7 @@ export function Telos({
     relationshipRevision,
     relationshipsChanged,
     refresh: refreshSession,
+    unreadCount,
   } = useTelos();
   const profileRequest = useRef(0),
     feedRequest = useRef(0);
@@ -238,17 +239,27 @@ export function Telos({
       .on(
         "postgres_changes",
         {
-          event: "INSERT",
+          event: "*",
           schema: "public",
           table: "notifications",
           filter: `user_id=eq.${user.id}`,
         },
-        (p) =>
-          setNotifications((old) =>
-            old.some((n) => n.id === p.new.id)
-              ? old
-              : [p.new as Notification, ...old],
-          ),
+        (p) => {
+          if (p.eventType === "DELETE") {
+            setNotifications((old) =>
+              old.filter((note) => note.id !== p.old.id),
+            );
+          } else if (p.new.title !== "New message") {
+            setNotifications((old) =>
+              [
+                p.new as Notification,
+                ...old.filter((note) => note.id !== p.new.id),
+              ]
+                .sort((a, b) => b.created_at.localeCompare(a.created_at))
+                .slice(0, 60),
+            );
+          }
+        },
       )
       .subscribe((status) => {
         if (status === "SUBSCRIBED") update();
@@ -371,6 +382,14 @@ export function Telos({
               <span>{item.label}</span>
               {item.id === "notifications" && unread > 0 && (
                 <b className="nav-badge">{unread}</b>
+              )}
+              {item.id === "messages" && unreadCount > 0 && (
+                <b
+                  className="nav-badge"
+                  aria-label={`${unreadCount} unread messages`}
+                >
+                  {unreadCount}
+                </b>
               )}
             </Link>
           ))}
@@ -714,6 +733,14 @@ export function Telos({
               }
             >
               <item.icon size={25} />
+              {item.id === "messages" && unreadCount > 0 && (
+                <b
+                  className="nav-badge"
+                  aria-label={`${unreadCount} unread messages`}
+                >
+                  {unreadCount}
+                </b>
+              )}
             </Link>
           ))}
         <button aria-label="New post" onClick={() => openPost()}>

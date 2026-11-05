@@ -48,6 +48,63 @@ afterEach(() => {
   vi.unstubAllGlobals();
 });
 describe("authenticated API boundary", () => {
+  it("searches a fresh draft without saving or modifying a public intent", async () => {
+    mocks.rpc.mockResolvedValue({ data: source, error: null });
+    const { intentDraft } = await import("../src/lib/intent-input");
+    const response = await request(
+      "search",
+      intentDraft("Looking for robotics collaborators"),
+    );
+    expect(response.status).toBe(200);
+    expect(await response.json()).toEqual({ id: source, indexed: false });
+    expect(mocks.rpc).toHaveBeenCalledWith(
+      "create_people_search",
+      expect.objectContaining({
+        payload: expect.objectContaining({
+          role: "open",
+          tags: [],
+          skills: [],
+          description: "Looking for robotics collaborators",
+        }),
+      }),
+    );
+    expect(mocks.rpc).not.toHaveBeenCalledWith(
+      "save_intent",
+      expect.anything(),
+    );
+    expect(mocks.from).not.toHaveBeenCalled();
+  });
+  it("refreshes unsaved matching without another Gemini call", async () => {
+    mocks.rpc.mockResolvedValue({ data: [], error: null });
+    const response = await request("search-matches", { id: source });
+    expect(response.status).toBe(200);
+    expect(mocks.rpc).toHaveBeenCalledWith(
+      "search_people",
+      expect.objectContaining({ search_id: source }),
+    );
+  });
+  it("requires a displayed-message cursor before marking a chat read", async () => {
+    expect((await request("read", { id: source })).status).toBe(422);
+    expect(mocks.rpc).not.toHaveBeenCalled();
+    mocks.rpc.mockResolvedValue({ data: null, error: null });
+    expect(
+      (await request("read", { id: source, last_message_id: session })).status,
+    ).toBe(200);
+    expect(mocks.rpc).toHaveBeenCalledWith("mark_messages_read", {
+      cid: source,
+      last_message_id: session,
+    });
+  });
+  it("loads the inbox in one database call", async () => {
+    mocks.rpc.mockResolvedValue({ data: [], error: null });
+    const response = await GET(
+      new NextRequest("http://localhost:3000/api/conversations"),
+      { params: Promise.resolve({ resource: "conversations" }) },
+    );
+    expect(response.status).toBe(200);
+    expect(mocks.rpc).toHaveBeenCalledWith("inbox");
+    expect(mocks.from).not.toHaveBeenCalled();
+  });
   it.each([
     [null, null],
     [{ sub: currentUser, role: "anon" }, null],

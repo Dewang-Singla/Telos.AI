@@ -115,58 +115,39 @@ test("private searches find people, social posts stay separate, and chat persist
       (i: { description: string }) =>
         i.description === `${topic} collaboration session`,
     );
-    let releaseContext!: () => void;
-    const contextGate = new Promise<void>((resolve) => {
-      releaseContext = resolve;
-    });
-    await a.route("**/api/intent-context?**", async (route) => {
-      await contextGate;
-      await route.continue();
-    });
     await a
       .locator(".private-intent-title")
       .filter({ hasText: topic })
       .first()
       .click();
     await expect(
-      a.getByRole("button", { name: "Find people", exact: true }),
+      a.getByRole("button", { name: "Saved", exact: true }),
     ).toBeDisabled();
-    releaseContext();
-    await expect(
-      a.getByRole("button", { name: "Find people", exact: true }),
-    ).toBeEnabled();
-    await a.unroute("**/api/intent-context?**");
-    await a.getByRole("button", { name: "Find people", exact: true }).click();
     expect((await (await a.request.get("/api/intents")).json()).length).toBe(
       beforeReopen.length,
     );
     await a
       .getByRole("textbox", { name: "Your intent" })
-      .fill(`${topic} collaboration session revised`);
-    const editResponse = a.waitForResponse(
-      (r) =>
-        r.url().endsWith("/api/intents") && r.request().method() === "POST",
+      .fill(topic + " collaboration session revised");
+    const searchResponse = a.waitForResponse(
+      (r) => r.url().endsWith("/api/search") && r.request().method() === "POST",
     );
     await a.getByRole("button", { name: "Find people", exact: true }).click();
-    const edited = await editResponse;
-    expect(edited.request().postDataJSON().id).toBe(sourceIntent.id);
+    expect((await searchResponse).ok()).toBe(true);
     await expect(
       a.getByRole("button", { name: "Find people", exact: true }),
     ).toBeEnabled();
     expect((await (await a.request.get("/api/intents")).json()).length).toBe(
       beforeReopen.length,
     );
+    const savedAgain = (
+      await (await a.request.get("/api/intents")).json()
+    ).find((i: { id: string }) => i.id === sourceIntent.id);
+    expect(savedAgain.description).toBe(topic + " collaboration session");
     await a
       .getByRole("textbox", { name: "Your intent" })
-      .fill(`${topic} collaboration session`);
-    const restoreResponse = a.waitForResponse(
-      (r) =>
-        r.url().endsWith("/api/intents") && r.request().method() === "POST",
-    );
+      .fill(topic + " collaboration session");
     await a.getByRole("button", { name: "Find people", exact: true }).click();
-    expect((await restoreResponse).request().postDataJSON().id).toBe(
-      sourceIntent.id,
-    );
     const match = a.locator(".match-person").filter({ hasText: nameB });
     await expect(match).toBeVisible({ timeout: 20000 });
     await expect(match).toContainText(`${topic} collaboration session`);

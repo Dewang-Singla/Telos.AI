@@ -39,6 +39,11 @@ function checked<T>({
   error: { message: string; code?: string } | null;
 }): NonNullable<T> {
   if (error) {
+    if (error.message.startsWith("Search expired."))
+      throw new HTTPError(
+        "Search expired. Click Find people to search again.",
+        410,
+      );
     if (error.code === "23505")
       throw new HTTPError(
         "That username or connection request already exists.",
@@ -117,6 +122,47 @@ async function aiLimit(db: DB) {
       429,
     );
 }
+async function prepareIntent(
+  db: DB,
+  body: z.infer<typeof intentSchema>,
+  automaticRequested: boolean,
+) {
+  let parsed: Interpretation | null = null,
+    vector: number[] | null = null;
+  if (process.env.GEMINI_API_KEY) {
+    try {
+      await aiLimit(db);
+      parsed = await interpret(`${body.title}\n${body.description}`);
+      vector = await embed(parsed.topic);
+    } catch {
+      /* Keyword retrieval remains available. */
+    }
+  }
+  const automatic = automaticRequested && parsed !== null;
+  const interpreted = automatic
+    ? intentSchema.safeParse({
+        ...body,
+        title: parsed!.title,
+        role: body.role === "open" ? parsed!.role : body.role,
+        city: body.city || parsed!.city,
+        mode:
+          body.latitude !== null || body.city || body.mode !== "online"
+            ? body.mode
+            : parsed!.mode !== "online" && !parsed!.city
+              ? body.mode
+              : parsed!.mode,
+        tags: body.tags.length ? body.tags : parsed!.tags,
+        skills: body.skills.length ? body.skills : parsed!.skills,
+        starts_at: body.starts_at || parsed!.starts_at,
+        ends_at: body.ends_at || parsed!.ends_at,
+        participants: parsed!.participants,
+      })
+    : null;
+  const enriched = interpreted?.success ? interpreted.data : body;
+  const { latitude, longitude, radius_km, ...details } = enriched;
+  return { details, latitude, longitude, radius_km, vector };
+}
+
 const intentSelect = "*,profile:profiles!intents_user_id_fkey(*)";
 async function signPosts(db: DB, posts: SocialPost[]) {
   const paths = [...new Set(posts.flatMap((post) => post.media_paths))];
@@ -307,49 +353,8 @@ export async function GET(req: NextRequest, context: Context) {
           ),
         );
       }
-      case "conversations": {
-        const conversations = checked(
-          await db
-            .from("conversations")
-            .select(
-              "*,connection_requests(status),conversation_members(*,profile:profiles(*)),messages(body,created_at,sender_id)",
-            )
-            .order("created_at", {
-              referencedTable: "messages",
-              ascending: false,
-            })
-            .limit(1, { referencedTable: "messages" })
-            .order("created_at", { ascending: false })
-            .limit(100),
-        );
-        const counts = await Promise.all(
-          conversations.map(async (c) => {
-            const member = c.conversation_members.find(
-              (m: { user_id: string }) => m.user_id === user.id,
-            );
-            const result = await db
-              .from("messages")
-              .select("id", { count: "exact", head: true })
-              .eq("conversation_id", c.id)
-              .neq("sender_id", user.id)
-              .gt("created_at", member?.last_read_at || c.created_at);
-            if (result.error) checked(result);
-            const latest = c.messages?.[0];
-            return {
-              ...c,
-              unread: result.count || 0,
-              last_message: latest?.body || "",
-              last_message_at: latest?.created_at || c.created_at,
-              can_message: c.connection_requests?.status === "accepted",
-            };
-          }),
-        );
-        return privateJson(
-          counts.sort((a, b) =>
-            b.last_message_at.localeCompare(a.last_message_at),
-          ),
-        );
-      }
+      case "conversations":
+        return privateJson(checked(await db.rpc("inbox")));
       case "messages": {
         let query = db
           .from("messages")
@@ -376,6 +381,7 @@ export async function GET(req: NextRequest, context: Context) {
             await db
               .from("notifications")
               .select("*")
+              .neq("title", "New message")
               .order("created_at", { ascending: false })
               .limit(60),
           ),
@@ -443,39 +449,8 @@ export async function POST(req: NextRequest, context: Context) {
       case "intents": {
         const body = intentSchema.parse(payload);
         const id = payload.id ? uuid.parse(payload.id) : null;
-        let parsed: Interpretation | null = null,
-          vector: number[] | null = null;
-        if (process.env.GEMINI_API_KEY) {
-          try {
-            await aiLimit(db);
-            parsed = await interpret(`${body.title}\n${body.description}`);
-            vector = await embed(parsed.topic);
-          } catch {
-            /* Keyword retrieval remains available. */
-          }
-        }
-        const automatic = payload.automatic === true && !id && parsed !== null;
-        const interpreted = automatic
-          ? intentSchema.safeParse({
-              ...body,
-              title: parsed!.title,
-              role: body.role === "open" ? parsed!.role : body.role,
-              city: body.city || parsed!.city,
-              mode:
-                body.latitude !== null || body.city || body.mode !== "online"
-                  ? body.mode
-                  : parsed!.mode !== "online" && !parsed!.city
-                    ? body.mode
-                    : parsed!.mode,
-              tags: body.tags.length ? body.tags : parsed!.tags,
-              skills: body.skills.length ? body.skills : parsed!.skills,
-              starts_at: body.starts_at || parsed!.starts_at,
-              ends_at: body.ends_at || parsed!.ends_at,
-              participants: parsed!.participants,
-            })
-          : null;
-        const enriched = interpreted?.success ? interpreted.data : body;
-        const { latitude, longitude, radius_km, ...details } = enriched;
+        const { details, latitude, longitude, radius_km, vector } =
+          await prepareIntent(db, body, payload.automatic === true && !id);
         const savedId = checked(
           await db.rpc("save_intent", {
             payload: details,
@@ -507,6 +482,23 @@ export async function POST(req: NextRequest, context: Context) {
           indexed,
           message: "Saved.",
         });
+      }
+      case "search": {
+        const body = intentSchema.parse(payload);
+        const prepared = await prepareIntent(db, body, true);
+        const id = checked(
+          await db.rpc("create_people_search", {
+            payload: prepared.details,
+            lat: prepared.latitude,
+            lng: prepared.longitude,
+            radius: prepared.radius_km,
+            values_json: prepared.vector,
+            model_name: prepared.vector
+              ? process.env.GEMINI_EMBEDDING_MODEL || "gemini-embedding-001"
+              : null,
+          }),
+        );
+        return privateJson({ id, indexed: Boolean(prepared.vector) });
       }
       case "index": {
         const id = uuid.parse(payload.id);
@@ -576,6 +568,7 @@ export async function POST(req: NextRequest, context: Context) {
         );
         return privateJson({ ok: true });
       }
+      case "search-matches":
       case "matches": {
         const body = z
           .object({
@@ -589,16 +582,20 @@ export async function POST(req: NextRequest, context: Context) {
           })
           .parse(payload);
         const rows = checked(
-          await db.rpc("find_people", {
-            source_id: body.id,
-            nearby_only: body.nearby,
-            lat: body.latitude,
-            lng: body.longitude,
-            radius: body.radius,
-            city_filter: body.city,
-            page_offset: body.offset,
-            min_similarity: Number(process.env.MATCH_MIN_SIMILARITY || 0.55),
-          }),
+          await db.rpc(
+            resource === "search-matches" ? "search_people" : "find_people",
+            {
+              [resource === "search-matches" ? "search_id" : "source_id"]:
+                body.id,
+              nearby_only: body.nearby,
+              lat: body.latitude,
+              lng: body.longitude,
+              radius: body.radius,
+              city_filter: body.city,
+              page_offset: body.offset,
+              min_similarity: Number(process.env.MATCH_MIN_SIMILARITY || 0.55),
+            },
+          ),
         ) as PersonMatch[];
         return privateJson(
           rows.map((row) => ({
@@ -788,8 +785,12 @@ export async function POST(req: NextRequest, context: Context) {
         );
       }
       case "read": {
-        const id = uuid.parse(payload.id);
-        checked(await db.rpc("mark_conversation_read", { cid: id }));
+        const { id, last_message_id } = z
+          .object({ id: uuid, last_message_id: uuid })
+          .parse(payload);
+        checked(
+          await db.rpc("mark_messages_read", { cid: id, last_message_id }),
+        );
         return privateJson({ ok: true });
       }
       case "notifications": {

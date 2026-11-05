@@ -131,6 +131,181 @@ afterAll(async () => {
 });
 
 describe("database privacy and independent posting", () => {
+  async function draft(user: string, description: string) {
+    return asUser(user, async () =>
+      String(
+        (
+          await query("select public.create_people_search($1::jsonb) id", [
+            JSON.stringify({
+              title: description.slice(0, 100),
+              description,
+              category: "Community",
+              role: "open",
+              mode: "online",
+              city: "",
+              tags: [],
+              skills: [],
+              participants: 2,
+            }),
+          ])
+        )[0].id,
+      ),
+    );
+  }
+  async function connect(a = A, b = B) {
+    await asUser(a, () =>
+      query("select public.send_connection_request($1,'Hello there')", [b]),
+    );
+    const request = (
+      await asUser(b, () =>
+        query(
+          "select id from public.connection_requests where status='pending'",
+        ),
+      )
+    )[0].id;
+    return String(
+      (
+        await asUser(b, () =>
+          query("select public.respond_request($1,true) id", [request]),
+        )
+      )[0].id,
+    );
+  }
+  it("runs changing drafts without publishing, changing or duplicating saved intents", async () => {
+    await intent(B, "I teach guitar and offer lessons", {
+      role: "teach",
+      mode: "online",
+    });
+    await intent(C, "I teach piano and offer lessons", {
+      role: "teach",
+      mode: "online",
+    });
+    const count = (await query("select count(*)::int n from public.intents"))[0]
+      .n;
+    const guitar = await draft(A, "Looking for a guitar teacher");
+    const piano = await draft(A, "Looking for a piano teacher");
+    const matches = (id: string) =>
+      asUser(A, () => query("select * from public.search_people($1)", [id]));
+    expect(
+      (await matches(guitar)).map((row) => (row.profile as { id: string }).id),
+    ).toEqual([B]);
+    expect(
+      (await matches(piano)).map((row) => (row.profile as { id: string }).id),
+    ).toEqual([C]);
+    expect(
+      (await query("select count(*)::int n from public.intents"))[0].n,
+    ).toBe(count);
+    expect(
+      await asUser(A, () => query("select * from public.intents")),
+    ).toHaveLength(0);
+    expect(
+      await asUser(B, () =>
+        query("select * from public.intents where user_id=$1", [A]),
+      ),
+    ).toHaveLength(0);
+    await expect(
+      asUser(B, () =>
+        query("select * from public.search_people($1)", [guitar]),
+      ),
+    ).rejects.toThrow();
+    await expect(
+      asUser(A, () => query("select * from private.people_searches")),
+    ).rejects.toThrow();
+    await query(
+      "update private.people_searches set expires_at=now()-interval '1 second' where id=$1",
+      [guitar],
+    );
+    await expect(matches(guitar)).rejects.toThrow(/expired/);
+  });
+  it("does not return unsaved drafts as candidates and bounds private draft retention", async () => {
+    const source = await intent(A, "Looking for a guitar teacher", {
+      role: "learn",
+      mode: "online",
+    });
+    await draft(B, "I teach guitar and offer lessons");
+    expect(
+      await asUser(A, () =>
+        query("select * from public.find_people($1)", [source]),
+      ),
+    ).toHaveLength(0);
+    for (let i = 0; i < 22; i++)
+      await draft(B, `I teach guitar and offer lessons ${i}`);
+    expect(
+      (
+        await query(
+          "select count(*)::int n from private.people_searches where user_id=$1",
+          [B],
+        )
+      )[0].n,
+    ).toBe(20);
+    await intent(B, "I teach guitar and offer lessons", {
+      role: "teach",
+      mode: "online",
+    });
+    expect(
+      await asUser(A, () =>
+        query("select * from public.find_people($1)", [source]),
+      ),
+    ).toHaveLength(1);
+  });
+  it("counts unread messages per chat, keeps future arrivals unread, and authorizes read cursors", async () => {
+    const ab = await connect();
+    const cb = await connect(C, B);
+    const send = (user: string, cid: string, body: string) =>
+      asUser(user, async () =>
+        String(
+          (
+            await query(
+              "insert into public.messages(conversation_id,sender_id,body) values($1,$2,$3) returning id",
+              [cid, user, body],
+            )
+          )[0].id,
+        ),
+      );
+    const first = await send(A, ab, "First incoming message");
+    const second = await send(A, ab, "Arrived before read acknowledgement");
+    await send(C, cb, "Different chat");
+    const inbox = () =>
+      asUser(B, async () =>
+        (await query("select public.inbox() chat")).map(
+          (row) => row.chat as { id: string; unread: number },
+        ),
+      );
+    expect((await inbox()).find((c) => c.id === ab)?.unread).toBe(2);
+    expect((await inbox()).find((c) => c.id === cb)?.unread).toBe(1);
+    await asUser(B, () =>
+      query("select public.mark_messages_read($1,$2)", [ab, first]),
+    );
+    expect((await inbox()).find((c) => c.id === ab)?.unread).toBe(1);
+    await asUser(B, () =>
+      query("select public.mark_messages_read($1,$2)", [ab, second]),
+    );
+    await asUser(B, () =>
+      query("select public.mark_messages_read($1,$2)", [ab, first]),
+    );
+    expect((await inbox()).find((c) => c.id === ab)?.unread).toBe(0);
+    expect((await inbox()).find((c) => c.id === cb)?.unread).toBe(1);
+    expect(
+      await asUser(C, () => query("select public.inbox() chat")),
+    ).toHaveLength(1);
+    await expect(
+      asUser(C, () =>
+        query("select public.mark_messages_read($1,$2)", [ab, second]),
+      ),
+    ).rejects.toThrow();
+    await expect(
+      asUser(B, () =>
+        query("select public.mark_messages_read($1,$2)", [cb, second]),
+      ),
+    ).rejects.toThrow();
+    const notes = await asUser(B, () =>
+      query("select title from public.notifications"),
+    );
+    expect(notes.some((note) => note.title === "New message")).toBe(false);
+    expect(
+      notes.some((note) => note.title === "Someone wants to connect"),
+    ).toBe(true);
+  });
   it("reuses equivalent active searches without changing their creation time", async () => {
     const first = await intent(A, "looking for guitar tutor");
     const before = (

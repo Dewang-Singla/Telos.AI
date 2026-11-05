@@ -13,7 +13,8 @@ import { browserClient, configured } from "@/lib/supabase/client";
 import { api } from "@/lib/api";
 import type { Profile } from "@/lib/types";
 import { shouldRefreshSession } from "@/lib/session-events";
-type State = {
+import { useInbox } from "./use-inbox";
+type State = ReturnType<typeof useInbox> & {
   user: User | null;
   profile: Profile | null;
   loading: boolean;
@@ -35,6 +36,7 @@ export function Provider({ children }: { children: ReactNode }) {
     [notice, setNotice] = useState("");
   const [onlineIds, setOnlineIds] = useState<string[]>([]);
   const [relationshipRevision, setRelationshipRevision] = useState(0);
+  const inbox = useInbox(user?.id, relationshipRevision);
   const pendingRefresh = useRef<Promise<void> | null>(null);
   const sessionVersion = useRef(0);
   const activeId = useRef<string | null>(null);
@@ -203,6 +205,7 @@ export function Provider({ children }: { children: ReactNode }) {
   return (
     <Context.Provider
       value={{
+        ...inbox,
         user,
         profile,
         loading,

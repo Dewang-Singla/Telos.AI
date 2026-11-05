@@ -1,6 +1,6 @@
 # Connect Telos and publish it
 
-Workspace status: Supabase is connected locally; the user reports migrations 001-004 and real signup/login/profile creation plus working signup-code mail. Apply 005 if pending, 006 for demo provisioning, then 007 for consistent context/search reuse. Further authenticated features and a public deployment still need testing. Skip creation/migrations already completed. No AI provider or Vercel deployment is connected. Keep private tokens and database passwords out of chat.
+Workspace status: the application is deployed at https://telos-ai-pink.vercel.app with Supabase and Gemini configured. A successful deployed intent response (`indexed: true`) has confirmed Gemini indexing. Apply migration 008 before deploying the manual-search/inbox update. Earlier migrations already applied should not be run again. Cloud two-account delivery, read counts, uploads and recovery still need end-to-end testing.
 
 ## 1. Create Supabase
 
@@ -41,7 +41,7 @@ GEMINI_EMBEDDING_MODEL=gemini-embedding-001
 MATCH_MIN_SIMILARITY=0.55
 ```
 
-4. Restart the server. Use **Find people** to save a private intent. When configured, the server extracts context and indexes its meaning. **Details** lets you set the fields yourself. Provider failures preserve the search and allow keyword retrieval.
+4. Restart the server. **Find people** runs a private draft search; it does not add a saved intent or make the draft discoverable by others. **Save intent** explicitly saves an active intent so other people can find it. Saved intents can be edited through their options menu. Gemini processes the current submitted text; keyword retrieval remains available if the provider fails. Private draft sessions expire after 24 hours and each account retains at most 20 sessions.
 5. Sign in with a second account in another browser and create a related intent. Results should show the person's profile and show the exact qualifying intent description for context. Profile display remains separately opt-in. Verify that Feed stays separate, and test teacher/learner and hiring/job-seeker direction. Semantic retrieval requires successful indexing for both searches.
 
 Text and embedding models are configurable but must support the implemented Gemini REST methods. Changing embedding models requires reindexing intentions; vectors from different model names are never compared. The server's `POST /api/index` accepts an owned intent ID for explicit reindexing. Do not switch the embedding dimensionality: the schema is 768-dimensional.
@@ -67,7 +67,7 @@ npm.cmd run check
 npx.cmd vercel deploy --prod
 ```
 
-The CLI prints a production URL after a successful deployment. If it requests payment or a paid upgrade, stop and use only eligible free-tier options. No deployment success has been verified by this workspace yet.
+The CLI prints a production URL after a successful deployment. If it requests payment or a paid upgrade, stop and use only eligible free-tier options. The existing production site is https://telos-ai-pink.vercel.app; subsequent code changes still require a successful deployment.
 
 6. In Supabase **Authentication → URL Configuration**, set the Site URL to that production origin and add both `https://YOUR_PROJECT.vercel.app/auth/callback` and `https://YOUR_PROJECT.vercel.app/auth/callback?next=/update-password` to redirect URLs. Retain localhost callbacks only if you still use local development.
 7. Verify the public URL in a signed-out browser. Open `/api/health` to confirm Supabase and AI configuration booleans. Health reports configuration presence, not database connectivity or provider success.
