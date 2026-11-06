@@ -11,8 +11,10 @@ import {
   commentSchema,
   uuid,
 } from "@/lib/validation";
-import { embed, interpret } from "@/lib/ai";
-import type { Interpretation, PersonMatch, SocialPost } from "@/lib/types";
+import { embed, interpret, assessMatches } from "@/lib/ai";
+import { createHash } from "node:crypto";
+import { compactHeading, fallbackInterpretation } from "@/lib/intent-context";
+import type { PersonMatch, SocialPost } from "@/lib/types";
 
 export const dynamic = "force-dynamic";
 function privateJson(body: unknown, init: ResponseInit = {}) {
@@ -39,6 +41,8 @@ function checked<T>({
   error: { message: string; code?: string } | null;
 }): NonNullable<T> {
   if (error) {
+    if (error.message.includes("Search superseded."))
+      throw new HTTPError("A newer search has replaced this one.", 409);
     if (error.message.startsWith("Search expired."))
       throw new HTTPError(
         "Search expired. Click Find people to search again.",
@@ -127,40 +131,116 @@ async function prepareIntent(
   body: z.infer<typeof intentSchema>,
   automaticRequested: boolean,
 ) {
-  let parsed: Interpretation | null = null,
-    vector: number[] | null = null;
+  const requestKey = createHash("sha256")
+    .update(
+      JSON.stringify({
+        version: 3,
+        body,
+        automaticRequested,
+        textModel: process.env.GEMINI_TEXT_MODEL,
+        embeddingModel: process.env.GEMINI_EMBEDDING_MODEL,
+      }),
+    )
+    .digest("hex");
+  // Cache is scoped to the authenticated owner by the RPC, including across Vercel instances.
+  try {
+    const cached = process.env.GEMINI_API_KEY
+      ? (await db.rpc("get_intent_artifact", { request_key: requestKey })).data
+      : null;
+    if (cached && typeof cached === "object" && "details" in cached) {
+      const parsed = intentSchema.safeParse({
+        ...cached.details,
+        latitude: cached.latitude,
+        longitude: cached.longitude,
+        radius_km: cached.radius_km,
+      });
+      const vector = z
+        .array(z.number().finite())
+        .length(768)
+        .safeParse(cached.vector);
+      if (parsed.success && vector.success) {
+        const { latitude, longitude, radius_km, ...details } = parsed.data;
+        return {
+          details,
+          latitude,
+          longitude,
+          radius_km,
+          vector: vector.data,
+          ai: true,
+        };
+      }
+    }
+  } catch {
+    /* Missing cache never prevents a search. */
+  }
+  let parsed = fallbackInterpretation(body.description),
+    vector: number[] | null = null,
+    ai = false;
   if (process.env.GEMINI_API_KEY) {
     try {
       await aiLimit(db);
-      parsed = await interpret(`${body.title}\n${body.description}`);
-      vector = await embed(parsed.topic);
+      parsed = await interpret(body.description);
+      ai = true;
+      try {
+        vector = await embed(parsed.topic);
+      } catch {
+        /* Lexical retrieval and contextual review still work. */
+      }
     } catch {
-      /* Keyword retrieval remains available. */
+      /* Deterministic context remains available, with an honest status. */
     }
   }
-  const automatic = automaticRequested && parsed !== null;
-  const interpreted = automatic
-    ? intentSchema.safeParse({
-        ...body,
-        title: parsed!.title,
-        role: body.role === "open" ? parsed!.role : body.role,
-        city: body.city || parsed!.city,
-        mode:
-          body.latitude !== null || body.city || body.mode !== "online"
-            ? body.mode
-            : parsed!.mode !== "online" && !parsed!.city
-              ? body.mode
-              : parsed!.mode,
-        tags: body.tags.length ? body.tags : parsed!.tags,
-        skills: body.skills.length ? body.skills : parsed!.skills,
-        starts_at: body.starts_at || parsed!.starts_at,
-        ends_at: body.ends_at || parsed!.ends_at,
-        participants: parsed!.participants,
-      })
-    : null;
-  const enriched = interpreted?.success ? interpreted.data : body;
+  const auto = automaticRequested || body.role === "open";
+  // User-selected location always wins. AI locations must appear in the original text.
+  const groundedCity =
+    parsed.city &&
+    body.description.toLowerCase().includes(parsed.city.toLowerCase())
+      ? parsed.city
+      : "";
+  const candidate = intentSchema.safeParse({
+    ...body,
+    title: compactHeading(parsed.title, body.description),
+    role: body.role === "open" ? parsed.role : body.role,
+    mode:
+      auto && body.mode === "hybrid"
+        ? parsed.mode === "in-person" &&
+          !body.city &&
+          !groundedCity &&
+          body.latitude === null
+          ? "hybrid"
+          : parsed.mode
+        : body.mode,
+    city: body.city || (auto ? groundedCity : ""),
+    tags: body.tags,
+    skills: body.skills.length
+      ? body.skills
+      : auto &&
+          (["teach", "work", "offer"].includes(parsed.role) ||
+            /\b(must|required|requires|only|need to know)\b/i.test(
+              body.description,
+            ))
+        ? parsed.skills
+        : [],
+    starts_at: body.starts_at,
+    ends_at: body.ends_at,
+    participants: body.participants,
+  });
+  const enriched = candidate.success
+    ? candidate.data
+    : { ...body, title: compactHeading(body.title, body.description) };
   const { latitude, longitude, radius_km, ...details } = enriched;
-  return { details, latitude, longitude, radius_km, vector };
+  const artifact = { details, latitude, longitude, radius_km, vector, ai };
+  if (ai && vector) {
+    try {
+      await db.rpc("put_intent_artifact", {
+        request_key: requestKey,
+        artifact,
+      });
+    } catch {
+      /* Cache is optional. */
+    }
+  }
+  return artifact;
 }
 
 const intentSelect = "*,profile:profiles!intents_user_id_fkey(*)";
@@ -223,7 +303,10 @@ export async function GET(req: NextRequest, context: Context) {
       }
       case "intents": {
         const author = q.get("user") ? uuid.parse(q.get("user")) : user.id;
-        let query = db.from("intents").select(intentSelect);
+        let query = db
+          .from("intents")
+          .select(intentSelect)
+          .eq("is_saved", true);
         if (q.get("sort") === "soon")
           query = query.order("starts_at", {
             ascending: true,
@@ -255,7 +338,12 @@ export async function GET(req: NextRequest, context: Context) {
           .min(0)
           .max(10000)
           .parse(q.get("offset") || 0);
-        return privateJson(checked(await query.range(offset, offset + 49)));
+        return privateJson(
+          checked(await query.range(offset, offset + 49)).map((row) => ({
+            ...row,
+            title: compactHeading(row.title, row.description),
+          })),
+        );
       }
       case "saved":
       case "posts": {
@@ -450,7 +538,7 @@ export async function POST(req: NextRequest, context: Context) {
         const body = intentSchema.parse(payload);
         const id = payload.id ? uuid.parse(payload.id) : null;
         const { details, latitude, longitude, radius_km, vector } =
-          await prepareIntent(db, body, payload.automatic === true && !id);
+          await prepareIntent(db, body, payload.automatic === true);
         const savedId = checked(
           await db.rpc("save_intent", {
             payload: details,
@@ -485,6 +573,25 @@ export async function POST(req: NextRequest, context: Context) {
       }
       case "search": {
         const body = intentSchema.parse(payload);
+        const ordering = z
+          .object({
+            search_session: uuid.optional(),
+            search_version: z.number().int().min(1).max(1000000000).optional(),
+          })
+          .refine(
+            (value) =>
+              Boolean(value.search_session) === Boolean(value.search_version),
+            { message: "Search session and version must be paired" },
+          )
+          .parse(payload);
+        const generation = ordering.search_session
+          ? checked(
+              await db.rpc("begin_people_search", {
+                session_uuid: ordering.search_session,
+                request_version: ordering.search_version,
+              }),
+            )
+          : null;
         const prepared = await prepareIntent(db, body, true);
         const id = checked(
           await db.rpc("create_people_search", {
@@ -496,9 +603,14 @@ export async function POST(req: NextRequest, context: Context) {
             model_name: prepared.vector
               ? process.env.GEMINI_EMBEDDING_MODEL || "gemini-embedding-001"
               : null,
+            request_generation: generation,
           }),
         );
-        return privateJson({ id, indexed: Boolean(prepared.vector) });
+        return privateJson({
+          id,
+          indexed: Boolean(prepared.vector),
+          title: prepared.details.title,
+        });
       }
       case "index": {
         const id = uuid.parse(payload.id);
@@ -567,6 +679,101 @@ export async function POST(req: NextRequest, context: Context) {
             .eq("user_id", user.id),
         );
         return privateJson({ ok: true });
+      }
+      case "matching": {
+        const body = z
+          .object({
+            id: uuid,
+            nearby: z.boolean().default(false),
+            latitude: z.number().min(-90).max(90).nullable().default(null),
+            longitude: z.number().min(-180).max(180).nullable().default(null),
+            radius: z.number().min(1).max(500).default(25),
+            city: z.string().trim().max(100).default(""),
+            offset: z.number().int().min(0).max(10000).default(0),
+          })
+          .refine((b) => (b.latitude === null) === (b.longitude === null), {
+            message: "Both coordinates are required",
+          })
+          .parse(payload);
+        const context = checked(
+          await db.rpc("matching_context", {
+            source_id: body.id,
+            nearby_only: body.nearby,
+            lat: body.latitude,
+            lng: body.longitude,
+            radius: body.radius,
+            city_filter: body.city,
+            page_offset: body.offset,
+            min_similarity: Math.max(
+              0.82,
+              Math.min(0.97, Number(process.env.MATCH_MIN_SIMILARITY) || 0.82),
+            ),
+          }),
+        ) as {
+          source: string;
+          candidates: (PersonMatch & {
+            lexical_confidence: number;
+            reviewed: boolean;
+            relevant: boolean | null;
+          })[];
+        };
+        const candidates = context.candidates;
+        const pending = candidates
+          .map((candidate, index) => ({ candidate, index }))
+          .filter((row) => !row.candidate.reviewed);
+        let decisions = new Map<string, boolean>();
+        let mode: "ai" | "keyword" = candidates.some((c) => c.reviewed)
+          ? "ai"
+          : "keyword";
+        if (pending.length && process.env.GEMINI_API_KEY) {
+          try {
+            if (
+              !checked(
+                await db.rpc("consume_rate_limit", {
+                  action_name: "match_reviews",
+                }),
+              )
+            )
+              throw new Error("Review limit");
+            decisions = await assessMatches(
+              context.source,
+              pending.map(({ candidate, index }) => ({
+                key: String(index),
+                text: candidate.matched_intent || "",
+              })),
+            );
+            mode = "ai";
+            await db.rpc("review_people", {
+              source_id: body.id,
+              decisions: pending.map(({ candidate, index }) => ({
+                id: candidate.profile.id,
+                text: candidate.matched_intent,
+                relevant: decisions.get(String(index)) === true,
+              })),
+            });
+          } catch {
+            /* Safe lexical matches remain available when free-tier AI is unavailable. */
+          }
+        }
+        const people = candidates
+          .filter((candidate, index) =>
+            candidate.reviewed
+              ? candidate.relevant === true
+              : decisions.has(String(index))
+                ? decisions.get(String(index)) === true
+                : candidate.lexical_confidence >= 0.3,
+          )
+          .map((candidate) => ({
+            profile: candidate.profile,
+            is_online: Boolean(candidate.is_online),
+            distance_km: candidate.distance_km ?? null,
+            matched_intent: candidate.matched_intent,
+          }));
+        return privateJson({
+          people,
+          mode,
+          next_offset: candidates.length === 60 ? body.offset + 60 : null,
+        });
       }
       case "search-matches":
       case "matches": {

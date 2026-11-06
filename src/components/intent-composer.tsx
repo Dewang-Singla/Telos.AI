@@ -3,6 +3,7 @@ import { useEffect, useState, type FormEvent } from "react";
 import { ChevronDown, Loader2, MapPin, SlidersHorizontal } from "lucide-react";
 import { api } from "@/lib/api";
 import { intentSchema } from "@/lib/validation";
+import { intentHeading } from "@/lib/intent-context";
 import { roles, type Intent, type Role, type Mode } from "@/lib/types";
 import { useTelos } from "./provider";
 import { Avatar, Modal } from "./ui";
@@ -44,7 +45,7 @@ export function IntentComposer({
     ),
     [details, setDetails] = useState(false),
     [role, setRole] = useState<Role>(existing?.role || "open"),
-    [mode, setMode] = useState<Mode>(existing?.mode || "online"),
+    [mode, setMode] = useState<Mode>(existing?.mode || "hybrid"),
     [city, setCity] = useState(existing?.city || ""),
     [tags, setTags] = useState(existing?.tags.join(", ") || ""),
     [skills, setSkills] = useState(existing?.skills.join(", ") || "");
@@ -100,9 +101,8 @@ export function IntentComposer({
     setError("");
     try {
       const text = description.trim();
-      const first = text.split(/[\n.!?]/)[0];
       const body = intentSchema.parse({
-        title: (first.length >= 3 ? first : text).slice(0, 100),
+        title: intentHeading(text),
         description: text,
         category: existing?.category || "Community",
         role,
@@ -127,7 +127,7 @@ export function IntentComposer({
       const result = await api<{ id: string }>("intents", {
         ...body,
         id: existing?.id,
-        automatic: !existing && !details,
+        automatic: true,
       });
       onSave(result.id);
       close();

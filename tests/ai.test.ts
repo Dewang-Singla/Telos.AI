@@ -1,5 +1,5 @@
 import { afterEach, describe, expect, it, vi } from "vitest";
-import { embed, interpret } from "../src/lib/ai";
+import { embed, interpret, assessMatches } from "../src/lib/ai";
 const valid = {
   title: "Learning guitar with a teacher",
   category: "Learn & grow",
@@ -18,6 +18,36 @@ afterEach(() => {
   vi.unstubAllGlobals();
 });
 describe("AI failure handling and structured responses (mocked provider)", () => {
+  it.each([
+    [{ key: "wrong", relevant: true }],
+    [
+      { key: "0", relevant: true },
+      { key: "0", relevant: false },
+    ],
+    [],
+  ].map(decisions => ({ decisions })))(
+    "rejects incomplete or fabricated relevance decisions",
+    async ({ decisions }) => {
+      vi.stubEnv("GEMINI_API_KEY", "synthetic-key");
+      vi.stubGlobal(
+        "fetch",
+        vi
+          .fn()
+          .mockResolvedValue(
+            Response.json({
+              candidates: [
+                {
+                  content: { parts: [{ text: JSON.stringify({ decisions }) }] },
+                },
+              ],
+            }),
+          ),
+      );
+      await expect(
+        assessMatches("Guitar", [{ key: "0", text: "Piano" }]),
+      ).rejects.toThrow();
+    },
+  );
   it("fails explicitly when no AI key exists, without making a request", async () => {
     vi.stubEnv("GEMINI_API_KEY", "");
     const fetcher = vi.fn();

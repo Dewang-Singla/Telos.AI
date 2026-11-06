@@ -48,6 +48,154 @@ afterEach(() => {
   vi.unstubAllGlobals();
 });
 describe("authenticated API boundary", () => {
+  it("uses cached contextual decisions without another Gemini request and strips retrieval metadata", async () => {
+    const fetcher = vi.fn();
+    vi.stubGlobal("fetch", fetcher);
+    mocks.rpc.mockResolvedValue({
+      data: {
+        source: "Video editing",
+        candidates: [
+          {
+            profile: { id: source },
+            matched_intent: "I enjoy video editing",
+            is_online: true,
+            distance_km: null,
+            reviewed: true,
+            relevant: true,
+            lexical_confidence: 1,
+          },
+          {
+            profile: { id: session },
+            matched_intent: "Unrelated design",
+            is_online: false,
+            distance_km: null,
+            reviewed: true,
+            relevant: false,
+            lexical_confidence: 0.5,
+          },
+        ],
+      },
+      error: null,
+    });
+    const response = await request("matching", { id: currentUser });
+    expect(response.status).toBe(200);
+    const page = await response.json();
+    expect(page.people).toHaveLength(1);
+    expect(page.mode).toBe("ai");
+    expect(page.next_offset).toBeNull();
+    expect(page.people[0]).not.toHaveProperty("reviewed");
+    expect(page.people[0]).not.toHaveProperty("lexical_confidence");
+    expect(fetcher).not.toHaveBeenCalled();
+  });
+  it("uses Gemini pair decisions rather than accepting misleading similarity or generic shared terms", async () => {
+    vi.stubEnv("GEMINI_API_KEY", "synthetic-key");
+    mocks.rpc.mockImplementation((name) =>
+      Promise.resolve({
+        data:
+          name === "matching_context"
+            ? {
+                source: "Guitar lessons",
+                candidates: [
+                  {
+                    profile: { id: source },
+                    matched_intent: "Guitar teacher",
+                    is_online: true,
+                    distance_km: null,
+                    reviewed: false,
+                    relevant: null,
+                    lexical_confidence: 1,
+                  },
+                  {
+                    profile: { id: session },
+                    matched_intent: "Piano teacher",
+                    is_online: false,
+                    distance_km: null,
+                    reviewed: false,
+                    relevant: null,
+                    lexical_confidence: 0.5,
+                  },
+                ],
+              }
+            : true,
+        error: null,
+      }),
+    );
+    vi.stubGlobal(
+      "fetch",
+      vi.fn().mockResolvedValue(
+        Response.json({
+          candidates: [
+            {
+              content: {
+                parts: [
+                  {
+                    text: JSON.stringify({
+                      decisions: [
+                        { key: "0", relevant: true },
+                        { key: "1", relevant: false },
+                      ],
+                    }),
+                  },
+                ],
+              },
+            },
+          ],
+        }),
+      ),
+    );
+    const page = await (await request("matching", { id: currentUser })).json();
+    expect(
+      page.people.map((p: { profile: { id: string } }) => p.profile.id),
+    ).toEqual([source]);
+    expect(mocks.rpc).toHaveBeenCalledWith(
+      "review_people",
+      expect.objectContaining({ source_id: currentUser }),
+    );
+  });
+  it("falls back conservatively and reports keyword mode when Gemini is unavailable", async () => {
+    vi.stubEnv("GEMINI_API_KEY", "synthetic-key");
+    mocks.rpc.mockImplementation((name) =>
+      Promise.resolve({
+        data:
+          name === "matching_context"
+            ? {
+                source: "Video editing",
+                candidates: [
+                  {
+                    profile: { id: source },
+                    matched_intent: "Video editing",
+                    is_online: true,
+                    distance_km: null,
+                    reviewed: false,
+                    relevant: null,
+                    lexical_confidence: 1,
+                  },
+                  {
+                    profile: { id: session },
+                    matched_intent: "Semantic-only guess",
+                    is_online: false,
+                    distance_km: null,
+                    reviewed: false,
+                    relevant: null,
+                    lexical_confidence: 0,
+                  },
+                ],
+              }
+            : true,
+        error: null,
+      }),
+    );
+    vi.stubGlobal(
+      "fetch",
+      vi.fn().mockResolvedValue(new Response("{}", { status: 429 })),
+    );
+    const page = await (await request("matching", { id: currentUser })).json();
+    expect(page.mode).toBe("keyword");
+    expect(page.people).toHaveLength(1);
+    expect(
+      mocks.rpc.mock.calls.some(([name]) => name === "review_people"),
+    ).toBe(false);
+  });
   it("searches a fresh draft without saving or modifying a public intent", async () => {
     mocks.rpc.mockResolvedValue({ data: source, error: null });
     const { intentDraft } = await import("../src/lib/intent-input");
@@ -56,7 +204,11 @@ describe("authenticated API boundary", () => {
       intentDraft("Looking for robotics collaborators"),
     );
     expect(response.status).toBe(200);
-    expect(await response.json()).toEqual({ id: source, indexed: false });
+    expect(await response.json()).toMatchObject({
+      id: source,
+      indexed: false,
+      title: expect.any(String),
+    });
     expect(mocks.rpc).toHaveBeenCalledWith(
       "create_people_search",
       expect.objectContaining({
@@ -382,7 +534,7 @@ describe("authenticated API boundary", () => {
     expect(response.status).toBe(200);
     const call = mocks.rpc.mock.calls.find(([name]) => name === "save_intent");
     expect(call?.[1].payload.starts_at).toBeNull();
-    expect(call?.[1].payload.role).toBe("open");
+    expect(call?.[1].payload.role).toBe("socialize");
   });
   it("updates only the authenticated presence session, ignoring spoofed identities", async () => {
     mocks.rpc.mockResolvedValue({ data: null, error: null });

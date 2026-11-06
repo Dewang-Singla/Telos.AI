@@ -2662,6 +2662,13 @@ textarea {
   margin-top: 10px;
   min-height: 44px;
 }
+.matching-mode {
+  color: var(--green);
+  font-size: 14px;
+  font-weight: 700;
+  margin-left: auto;
+  margin-right: 12px;
+}
 .mobile-bottom-nav > a {
   position: relative;
 }

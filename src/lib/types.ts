@@ -61,6 +61,7 @@ export type Intent = {
   distance_km?: number | null;
   is_online?: boolean;
   show_on_profile?: boolean;
+  is_saved?: boolean;
 };
 export type Interpretation = {
   title: string;
@@ -80,6 +81,11 @@ export type PersonMatch = {
   is_online: boolean;
   distance_km: number | null;
   matched_intent: string | null;
+};
+export type MatchPage = {
+  people: PersonMatch[];
+  next_offset: number | null;
+  mode: "ai" | "keyword";
 };
 export type SocialPost = {
   id: string;

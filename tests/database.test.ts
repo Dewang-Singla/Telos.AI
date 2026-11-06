@@ -131,6 +131,217 @@ afterAll(async () => {
 });
 
 describe("database privacy and independent posting", () => {
+  it("prevents an older slow search from replacing a newer active intent", async () => {
+    const session = crypto.randomUUID();
+    const begin = async (version: number) =>
+      Number(
+        (
+          await asUser(A, () =>
+            query("select public.begin_people_search($1,$2) n", [
+              session,
+              version,
+            ]),
+          )
+        )[0].n,
+      );
+    const first = await begin(1),
+      second = await begin(2);
+    const write = (generation: number, description: string) =>
+      asUser(A, () =>
+        query(
+          "select public.create_people_search($1::jsonb,null,null,25,null,null,$2) id",
+          [
+            JSON.stringify({
+              title: description,
+              description,
+              role: "open",
+              category: "Community",
+              mode: "hybrid",
+              city: "",
+              tags: [],
+              skills: [],
+              participants: 2,
+            }),
+            generation,
+          ],
+        ),
+      );
+    const latest = (await write(second, "Video editing"))[0].id;
+    await expect(write(first, "Graphic design")).rejects.toThrow(/superseded/);
+    await expect(begin(1)).rejects.toThrow(/superseded/);
+    expect(
+      (
+        await query(
+          "select id from public.intents where user_id=$1 and status='active'",
+          [A],
+        )
+      ).map((row) => row.id),
+    ).toEqual([latest]);
+  });
+  it.each([
+    ["Video editing", "Anyone interested in video editing", true],
+    ["Graphic designing", "I enjoy graphic design and creating posters", true],
+    ["Looking for a video editor", "Looking for a video editor job", true],
+    ["Video editing", "Graphic designer looking for poster projects", false],
+    ["Need a Python tutor", "I teach Java programming", false],
+    ["Need a guitar tutor", "I teach piano chords to beginners", false],
+    [
+      "Anyone interested in robotics",
+      "Anyone interested in graphic design",
+      false,
+    ],
+    [
+      "Looking for a football coach",
+      "I teach badminton and offer coaching",
+      false,
+    ],
+    [
+      "Looking for a guitar tutor Happy to discuss schedules and get started",
+      "I teach Python Happy to discuss schedules and get started",
+      false,
+    ],
+    ["Can anyone help me", "I teach piano and offer lessons", false],
+    ["Looking for a photographer", "I teach photography", true],
+    [
+      "Looking for frontend collaboration",
+      "Looking for website collaboration",
+      true,
+    ],
+  ])(
+    "qualifies practical context: %s / %s",
+    async (sourceText, targetText, expected) => {
+      const source = await intent(A, sourceText, { mode: "hybrid" });
+      await intent(B, targetText, { mode: "hybrid" });
+      const rows = await asUser(A, () =>
+        query("select * from public.find_people($1)", [source]),
+      );
+      expect(rows).toHaveLength(expected ? 1 : 0);
+    },
+  );
+  it("rejects unrelated named subjects even when both embeddings are identical", async () => {
+    const a = await intent(A, "Looking for a guitar tutor", { mode: "online" });
+    const b = await intent(B, "I teach Python programming", { mode: "online" });
+    const vector = Array(768).fill(0);
+    vector[0] = 1;
+    for (const [user, id] of [
+      [A, a],
+      [B, b],
+    ])
+      await asUser(user, () =>
+        query("select public.set_intent_embedding($1,$2::jsonb,'test')", [
+          id,
+          JSON.stringify(vector),
+        ]),
+      );
+    expect(
+      await asUser(A, () => query("select * from public.find_people($1)", [a])),
+    ).toHaveLength(0);
+  });
+  it("uses the selected location instead of stale saved coordinates, and matches whole city names", async () => {
+    const source = await intent(
+      A,
+      "Graphic design",
+      { mode: "in-person", city: "Delhi" },
+      28.61,
+      77.21,
+    );
+    await intent(
+      B,
+      "Graphic designing",
+      { mode: "hybrid", city: "Bangalore" },
+      12.97,
+      77.59,
+    );
+    expect(
+      await asUser(A, () =>
+        query("select * from public.find_people($1,true,12.97,77.59,5)", [
+          source,
+        ]),
+      ),
+    ).toHaveLength(1);
+    expect(
+      await asUser(A, () =>
+        query(
+          "select * from public.find_people($1,true,null,null,25,'Bengaluru, India')",
+          [source],
+        ),
+      ),
+    ).toHaveLength(1);
+    expect(
+      await asUser(A, () =>
+        query(
+          "select * from public.find_people($1,true,null,null,25,'Bengal')",
+          [source],
+        ),
+      ),
+    ).toHaveLength(0);
+  });
+  it("scopes AI artifacts and contextual review decisions to their owner and exact source text", async () => {
+    const key = "a".repeat(64);
+    await asUser(A, () =>
+      query("select public.put_intent_artifact($1,$2::jsonb)", [
+        key,
+        JSON.stringify({ private: "derived context" }),
+      ]),
+    );
+    await asUser(A, () =>
+      query("select public.put_intent_artifact($1,$2::jsonb)", [
+        key,
+        JSON.stringify({ private: "updated context" }),
+      ]),
+    );
+    expect(
+      (
+        await asUser(A, () =>
+          query("select public.get_intent_artifact($1) value", [key]),
+        )
+      )[0].value,
+    ).toEqual({ private: "updated context" });
+    expect(
+      (
+        await asUser(B, () =>
+          query("select public.get_intent_artifact($1) value", [key]),
+        )
+      )[0].value,
+    ).toBeNull();
+    const source = await intent(A, "Video editing", { mode: "online" });
+    await intent(B, "I enjoy video editing", { mode: "online" });
+    const context = () =>
+      asUser(A, () =>
+        query("select public.matching_context($1) value", [source]),
+      );
+    const initial = (await context())[0].value as {
+      candidates: { reviewed: boolean }[];
+    };
+    expect(initial.candidates[0].reviewed).toBe(false);
+    await asUser(A, () =>
+      query("select public.review_people($1,$2::jsonb)", [
+        source,
+        JSON.stringify([
+          { id: B, text: "I enjoy video editing", relevant: true },
+        ]),
+      ]),
+    );
+    expect(
+      (
+        (await context())[0].value as {
+          candidates: { reviewed: boolean; relevant: boolean }[];
+        }
+      ).candidates[0],
+    ).toMatchObject({ reviewed: true, relevant: true });
+    await asUser(A, () =>
+      query(
+        "update public.intents set description='Graphic design' where id=$1",
+        [source],
+      ),
+    );
+    expect(
+      ((await context())[0].value as { candidates: unknown[] }).candidates,
+    ).toHaveLength(0);
+    await expect(
+      asUser(C, () => query("select public.matching_context($1)", [source])),
+    ).rejects.toThrow();
+  });
   async function draft(user: string, description: string) {
     return asUser(user, async () =>
       String(
@@ -171,7 +382,7 @@ describe("database privacy and independent posting", () => {
       )[0].id,
     );
   }
-  it("runs changing drafts without publishing, changing or duplicating saved intents", async () => {
+  it("runs changing searches without adding them to saved history or exposing full rows", async () => {
     await intent(B, "I teach guitar and offer lessons", {
       role: "teach",
       mode: "online",
@@ -183,20 +394,23 @@ describe("database privacy and independent posting", () => {
     const count = (await query("select count(*)::int n from public.intents"))[0]
       .n;
     const guitar = await draft(A, "Looking for a guitar teacher");
-    const piano = await draft(A, "Looking for a piano teacher");
     const matches = (id: string) =>
       asUser(A, () => query("select * from public.search_people($1)", [id]));
     expect(
       (await matches(guitar)).map((row) => (row.profile as { id: string }).id),
     ).toEqual([B]);
+    const piano = await draft(A, "Looking for a piano teacher");
     expect(
       (await matches(piano)).map((row) => (row.profile as { id: string }).id),
     ).toEqual([C]);
+    await expect(matches(guitar)).rejects.toThrow();
     expect(
       (await query("select count(*)::int n from public.intents"))[0].n,
-    ).toBe(count);
+    ).toBe(Number(count) + 2);
     expect(
-      await asUser(A, () => query("select * from public.intents")),
+      await asUser(A, () =>
+        query("select * from public.intents where is_saved"),
+      ),
     ).toHaveLength(0);
     expect(
       await asUser(B, () =>
@@ -212,28 +426,33 @@ describe("database privacy and independent posting", () => {
       asUser(A, () => query("select * from private.people_searches")),
     ).rejects.toThrow();
     await query(
-      "update private.people_searches set expires_at=now()-interval '1 second' where id=$1",
+      "update public.intents set search_expires_at=now()-interval '1 second' where id=$1",
       [guitar],
     );
-    await expect(matches(guitar)).rejects.toThrow(/expired/);
+    await expect(matches(guitar)).rejects.toThrow();
   });
-  it("does not return unsaved drafts as candidates and bounds private draft retention", async () => {
+  it("finds unsaved active searches, bounds retention, and promotes a search when saved", async () => {
     const source = await intent(A, "Looking for a guitar teacher", {
       role: "learn",
       mode: "online",
     });
-    await draft(B, "I teach guitar and offer lessons");
+    const hidden = await draft(B, "I teach guitar and offer lessons");
+    expect(
+      (
+        await query("select is_saved from public.intents where id=$1", [hidden])
+      )[0].is_saved,
+    ).toBe(false);
     expect(
       await asUser(A, () =>
         query("select * from public.find_people($1)", [source]),
       ),
-    ).toHaveLength(0);
+    ).toHaveLength(1);
     for (let i = 0; i < 22; i++)
       await draft(B, `I teach guitar and offer lessons ${i}`);
     expect(
       (
         await query(
-          "select count(*)::int n from private.people_searches where user_id=$1",
+          "select count(*)::int n from public.intents where user_id=$1 and not is_saved and search_expires_at>now()",
           [B],
         )
       )[0].n,
@@ -247,6 +466,14 @@ describe("database privacy and independent posting", () => {
         query("select * from public.find_people($1)", [source]),
       ),
     ).toHaveLength(1);
+    expect(
+      (
+        await query(
+          "select is_saved from public.intents where user_id=$1 and description='I teach guitar and offer lessons'",
+          [B],
+        )
+      )[0].is_saved,
+    ).toBe(true);
   });
   it("counts unread messages per chat, keeps future arrivals unread, and authorizes read cursors", async () => {
     const ab = await connect();

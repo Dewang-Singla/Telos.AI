@@ -22,7 +22,7 @@ import { api } from "@/lib/api";
 import { intentDraft } from "@/lib/intent-input";
 import { profileLocation } from "@/lib/profile-location";
 import { browserClient } from "@/lib/supabase/client";
-import type { Intent, PersonMatch, Profile } from "@/lib/types";
+import type { Intent, PersonMatch, Profile, MatchPage } from "@/lib/types";
 import { Avatar, Empty, Loading } from "./ui";
 import { IntentComposer } from "./intent-composer";
 import { useTelos } from "./provider";
@@ -78,6 +78,16 @@ export function FindPeople({
     place?.latitude ?? null,
     place?.longitude ?? null,
   ]);
+  const [nextOffset, setNextOffset] = useState<number | null>(null);
+  const [matchingMode, setMatchingMode] = useState<"ai" | "keyword" | null>(
+    null,
+  );
+  const searchAbort = useRef<AbortController | null>(null);
+  const matchAbort = useRef<AbortController | null>(null);
+  const refreshQueued = useRef(false);
+  const latestFind = useRef<
+    (offset?: number, quiet?: boolean) => Promise<void>
+  >(async () => {});
   const [searched, setSearched] = useState<{
     id: string;
     saved: boolean;
@@ -85,6 +95,7 @@ export function FindPeople({
   const selectedRef = useRef<Intent | null>(null);
   const saving = useRef(false);
   const draftVersion = useRef(0);
+  const [searchSession] = useState(() => crypto.randomUUID());
   const activate = useCallback((intent: Intent | null) => {
     selectedRef.current = intent;
     setSelected(intent);
@@ -96,7 +107,16 @@ export function FindPeople({
     resultsElement = useRef<HTMLElement>(null);
   const invalidate = useCallback(() => {
     request.current++;
+    matchAbort.current?.abort();
+    matchAbort.current = null;
   }, []);
+  useEffect(
+    () => () => {
+      searchAbort.current?.abort();
+      matchAbort.current?.abort();
+    },
+    [],
+  );
   const loadMine = useCallback(
     async (offset = 0) => {
       if (!user) {
@@ -135,12 +155,21 @@ export function FindPeople({
         setBusy(false);
         return;
       }
+      if (quiet && matchAbort.current) {
+        refreshQueued.current = true;
+        return;
+      }
+      matchAbort.current?.abort();
+      const controller = new AbortController();
+      matchAbort.current = controller;
       const version = ++request.current;
-      if (!quiet) setBusy(true);
-      setError("");
+      if (!quiet) {
+        setBusy(true);
+        setError("");
+      }
       try {
-        const people = await api<PersonMatch[]>(
-          searched.saved ? "matches" : "search-matches",
+        const page = await api<MatchPage>(
+          "matching",
           {
             id: searched.id,
             nearby,
@@ -150,30 +179,43 @@ export function FindPeople({
             radius,
             offset,
           },
+          controller.signal,
         );
-        if (version !== request.current) return;
+        if (version !== request.current || controller.signal.aborted) return;
         setMatches((old) =>
           offset
             ? [
                 ...old,
-                ...people.filter(
+                ...page.people.filter(
                   (p) => !old.some((o) => o.profile.id === p.profile.id),
                 ),
               ]
-            : people,
+            : page.people,
         );
-        setHasMore(people.length === 30);
+        setNextOffset(page.next_offset);
+        setHasMore(page.next_offset !== null);
+        setMatchingMode(page.mode);
       } catch (e) {
-        if (version === request.current) {
+        if (version === request.current && !controller.signal.aborted)
           setError((e as Error).message);
-          setMatches([]);
-        }
       } finally {
+        if (matchAbort.current === controller) matchAbort.current = null;
         if (version === request.current) setBusy(false);
+        if (
+          version === request.current &&
+          refreshQueued.current &&
+          !controller.signal.aborted
+        ) {
+          refreshQueued.current = false;
+          setTimeout(() => void latestFind.current(0, true), 200);
+        }
       }
     },
     [user, searched, nearby, place, city, radius],
   );
+  useEffect(() => {
+    latestFind.current = find;
+  }, [find]);
   useEffect(() => {
     void loadMine();
   }, [loadMine, revision]);
@@ -224,15 +266,18 @@ export function FindPeople({
       if (document.visibilityState === "visible") refresh();
     }, 30000);
     window.addEventListener("focus", refresh);
+    window.addEventListener("online", refresh);
     return () => {
       clearTimeout(timer);
       clearInterval(interval);
       window.removeEventListener("focus", refresh);
+      window.removeEventListener("online", refresh);
       void db.removeChannel(channel);
     };
   }, [user, find, loadMine]);
   async function choose(intent: Intent) {
-    if (saving.current) return;
+    if (saving.current && !searchAbort.current) return;
+    clearResults();
     if (intent.status !== "active") {
       setEdit(intent);
       setComposer(true);
@@ -263,11 +308,15 @@ export function FindPeople({
           ? { latitude: context.latitude, longitude: context.longitude }
           : null,
       );
+      const restoredNearby =
+        intent.mode !== "online" &&
+        Boolean(context.latitude !== null || intent.city.trim());
+      setNearby(restoredNearby);
       setSearched({ id: intent.id, saved: true });
       setSavedFingerprint(
         JSON.stringify([
           intent.description.trim(),
-          nearby,
+          restoredNearby,
           intent.city,
           context.radius_km,
           context.latitude,
@@ -301,6 +350,18 @@ export function FindPeople({
     return body;
   }
   function clearResults() {
+    refreshQueued.current = false;
+    const wasSearching = Boolean(searchAbort.current);
+    searchAbort.current?.abort();
+    searchAbort.current = null;
+    matchAbort.current?.abort();
+    matchAbort.current = null;
+    if (wasSearching) {
+      saving.current = false;
+      setCreating(false);
+    }
+    setMatchingMode(null);
+    setNextOffset(null);
     draftVersion.current++;
     contextRequest.current++;
     setRestoring(false);
@@ -325,6 +386,8 @@ export function FindPeople({
       setError("Use your location or enter a city before searching nearby.");
       return;
     }
+    const controller = new AbortController();
+    searchAbort.current = controller;
     saving.current = true;
     setCreating(true);
     setError("");
@@ -333,10 +396,21 @@ export function FindPeople({
     request.current++;
     setSearched(null);
     setMatches([]);
+    setHasMore(false);
+    setNextOffset(null);
+    setMatchingMode(null);
     try {
       // Always interpret the current text; inferred roles from a saved search
       // must never carry into a different draft.
-      const result = await api<{ id: string }>("search", currentDraft());
+      const result = await api<{ id: string }>(
+        "search",
+        {
+          ...currentDraft(),
+          search_session: searchSession,
+          search_version: version,
+        },
+        controller.signal,
+      );
       if (version !== draftVersion.current) return;
       setSearched({ id: result.id, saved: false });
       if (window.matchMedia("(max-width:760px)").matches)
@@ -345,10 +419,14 @@ export function FindPeople({
           block: "start",
         });
     } catch (e) {
-      if (version === draftVersion.current) setError((e as Error).message);
+      if (version === draftVersion.current && !controller.signal.aborted)
+        setError((e as Error).message);
     } finally {
-      saving.current = false;
-      setCreating(false);
+      if (searchAbort.current === controller) {
+        searchAbort.current = null;
+        saving.current = false;
+        setCreating(false);
+      }
     }
   }
   async function saveIntent() {
@@ -374,6 +452,7 @@ export function FindPeople({
       const result = await api<{ id: string }>("intents", {
         ...body,
         automatic: true,
+        id: searched?.id,
       });
       const rows = await loadMine();
       if (version === draftVersion.current) {
@@ -408,7 +487,7 @@ export function FindPeople({
     }
   }
   function newSearch() {
-    if (saving.current) return;
+    if (saving.current && !searchAbort.current) return;
     clearResults();
     activate(null);
     setDraft("");
@@ -590,6 +669,7 @@ export function FindPeople({
             <div className="private-location-controls">
               <input
                 aria-label="City"
+                maxLength={100}
                 placeholder="City"
                 value={city}
                 onChange={(e) => {
@@ -644,7 +724,11 @@ export function FindPeople({
           <button
             className="primary-button full search-submit"
             disabled={
-              creating || restoring || locating || savingIntent || draft.trim().length < 3
+              creating ||
+              restoring ||
+              locating ||
+              savingIntent ||
+              draft.trim().length < 3
             }
           >
             {creating ? (
@@ -696,6 +780,11 @@ export function FindPeople({
       <section className="people-results" ref={resultsElement}>
         <header>
           <h2>People</h2>
+          {matchingMode && (
+            <span className="matching-mode" role="status">
+              {matchingMode === "ai" ? "AI matching" : "Keyword matching"}
+            </span>
+          )}
           {searched && (
             <button
               className="icon-button"
@@ -772,12 +861,7 @@ export function FindPeople({
               )}
               <button
                 className="primary-button"
-                onClick={() =>
-                  onConnect(
-                    person.profile,
-                    searched?.saved ? searched.id : undefined,
-                  )
-                }
+                onClick={() => onConnect(person.profile, searched?.id)}
               >
                 Connect
               </button>
@@ -801,7 +885,7 @@ export function FindPeople({
           <button
             className="load-more"
             disabled={busy}
-            onClick={() => void find(matches.length)}
+            onClick={() => nextOffset !== null && void find(nextOffset)}
           >
             Show more
           </button>

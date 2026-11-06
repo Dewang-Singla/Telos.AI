@@ -117,7 +117,7 @@ test("private searches find people, social posts stay separate, and chat persist
     );
     await a
       .locator(".private-intent-title")
-      .filter({ hasText: topic })
+      .filter({ hasText: sourceIntent.title })
       .first()
       .click();
     await expect(

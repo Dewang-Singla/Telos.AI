@@ -4,7 +4,7 @@ const text = (max: number) => z.string().trim().max(max);
 const tags = z.array(text(40).min(1)).max(12);
 const date = z.string().datetime({ offset: true }).nullable();
 export const interpretationSchema = z.object({
-  title: text(120).min(5),
+  title: text(120).min(3),
   category: z.enum(categories.slice(1) as [string, ...string[]]),
   role: z.enum(roles),
   mode: z.enum(["online", "in-person", "hybrid"]),
@@ -36,7 +36,7 @@ export const intentSchema = interpretationSchema
   })
   .refine(
     (v) =>
-      v.mode === "online" ||
+      v.mode !== "in-person" ||
       v.city.length > 0 ||
       (v.latitude !== null && v.longitude !== null),
     {
