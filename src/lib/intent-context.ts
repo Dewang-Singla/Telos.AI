@@ -1,7 +1,38 @@
 import type { Interpretation, Role } from "./types";
 
+export function volunteeringRole(content: string): "organize" | "join" | null {
+  if (!/\bvolunteer(?:s|ing)?\b/i.test(content)) return null;
+  if (
+    /\b(?:need|seek|seeking|want|looking for|recruit|recruiting)\s+(?:(?:a|an|some|more|few|many)\s+)?volunteers?\b|\b(?:organizing|organising|hosting)\b/i.test(
+      content,
+    )
+  )
+    return "organize";
+  if (
+    /\b(?:willing|available|ready|want|wish|looking|seeking|join|volunteering)\b|\bi\s+(?:can\s+)?volunteer\b/i.test(
+      content,
+    )
+  )
+    return "join";
+  return null;
+}
+
+export function contextRole(explicit: Role, content: string): Role {
+  const volunteer = volunteeringRole(content);
+  if (
+    volunteer &&
+    ["open", "hire", "work", "request", "offer", "organize", "join"].includes(
+      explicit,
+    )
+  )
+    return volunteer;
+  return explicit === "open" ? inferIntentRole(content) : explicit;
+}
+
 // Deterministic fallback: never invent a location, required skill or date.
 export function inferIntentRole(content: string): Role {
+  const volunteer = volunteeringRole(content);
+  if (volunteer) return volunteer;
   const text = content.toLowerCase();
   if (
     /\b(looking for|seeking|need|want|find)\b.{0,60}\b(job|employment|internship|position)\b|\b(open to work|available for hire|job seeker)\b/.test(

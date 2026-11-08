@@ -131,6 +131,97 @@ afterAll(async () => {
 });
 
 describe("database privacy and independent posting", () => {
+  it("matches the exact climate-volunteer pair in both directions with legacy AI roles", async () => {
+    const request = await intent(
+      A,
+      "need a volunteer for climate change awareness drive",
+      { role: "organize", mode: "online" },
+    );
+    const offer = await intent(B, "willing to do some volunteering work", {
+      role: "work",
+      mode: "online",
+    });
+    // Decisions from the older matching policy must not suppress a newly valid pair.
+    await query(
+      "insert into private.match_reviews(user_id,source_hash,candidate_id,candidate_hash,relevant) values($1,md5(lower($2)||'organize'),$3,md5($4),false)",
+      [
+        A,
+        "need a volunteer for climate change awareness drive",
+        B,
+        "willing to do some volunteering work",
+      ],
+    );
+    for (const [user, id, other] of [
+      [A, request, B],
+      [B, offer, A],
+    ]) {
+      const rows = await asUser(user, () =>
+        query("select * from public.find_people($1)", [id]),
+      );
+      expect(rows.map((row) => (row.profile as { id: string }).id)).toEqual([
+        other,
+      ]);
+      const context = (
+        await asUser(user, () =>
+          query("select public.matching_context($1) result", [id]),
+        )
+      )[0].result as { candidates: { lexical_confidence: number }[] };
+      expect(context.candidates[0].lexical_confidence).toBeGreaterThanOrEqual(
+        0.3,
+      );
+      expect(context.candidates[0]).toMatchObject({ reviewed: false });
+    }
+  });
+  it("does not duplicate repeated saves when generated roles and tags change", async () => {
+    const description = "need a volunteer for climate change awareness drive";
+    const input = {
+      title: "Climate volunteers",
+      description,
+      category: "Community",
+      role: "open",
+      mode: "hybrid",
+      city: "",
+      tags: [],
+      skills: [],
+      participants: 2,
+      starts_at: null,
+      ends_at: null,
+    };
+    const key = "b".repeat(64);
+    const save = (role: string, tags: string[]) =>
+      asUser(A, async () =>
+        String(
+          (
+            await query(
+              "select public.save_intent($1::jsonb,null,null,null,25) id",
+              [
+                JSON.stringify({
+                  ...input,
+                  role,
+                  tags,
+                  _automatic: true,
+                  _input: input,
+                  _request_key: key,
+                }),
+              ],
+            )
+          )[0].id,
+        ),
+      );
+    const first = await save("organize", ["Climate change"]);
+    expect(await save("request", ["Volunteering", "Awareness"])).toBe(first);
+    expect(
+      (
+        await query(
+          "select count(*)::int n from public.intents where user_id=$1",
+          [A],
+        )
+      )[0].n,
+    ).toBe(1);
+    await expect(
+      asUser(B, () => query("select * from private.intent_request_keys")),
+    ).rejects.toThrow();
+  });
   it("prevents an older slow search from replacing a newer active intent", async () => {
     const session = crypto.randomUUID();
     const begin = async (version: number) =>

@@ -3,9 +3,22 @@ import {
   compactHeading,
   fallbackInterpretation,
   intentHeading,
+  contextRole,
 } from "../src/lib/intent-context";
 
 describe("concise intent context without an AI dependency", () => {
+  it("recognizes unpaid volunteering even when a previous AI role says work", () => {
+    expect(contextRole("work", "willing to do some volunteering work")).toBe(
+      "join",
+    );
+    expect(
+      contextRole(
+        "hire",
+        "need a volunteer for climate change awareness drive",
+      ),
+    ).toBe("organize");
+    expect(contextRole("teach", "I teach volunteer management")).toBe("teach");
+  });
   it.each([
     [
       "Looking for a guitar tutor who can help me learn beginner chords and fingerstyle on weekends",

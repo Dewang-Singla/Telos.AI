@@ -1,5 +1,5 @@
 "use client";
-import { useEffect, useState, type FormEvent } from "react";
+import { useEffect, useRef, useState, type FormEvent } from "react";
 import { ChevronDown, Loader2, MapPin, SlidersHorizontal } from "lucide-react";
 import { api } from "@/lib/api";
 import { intentSchema } from "@/lib/validation";
@@ -33,6 +33,7 @@ export function IntentComposer({
   initialText?: string;
 }) {
   const { user, profile, toast } = useTelos();
+  const submitting = useRef(false);
   const {
     coordinates: coords,
     setCoordinates: setCoords,
@@ -96,7 +97,8 @@ export function IntentComposer({
   }
   async function submit(e: FormEvent) {
     e.preventDefault();
-    if (!user) return;
+    if (!user || submitting.current) return;
+    submitting.current = true;
     setBusy(true);
     setError("");
     try {
@@ -135,6 +137,7 @@ export function IntentComposer({
     } catch (e) {
       setError((e as Error).message);
     } finally {
+      submitting.current = false;
       setBusy(false);
     }
   }

@@ -5,6 +5,16 @@ import { assessMatches, interpret } from "../src/lib/ai";
 describe.skipIf(process.env.TELOS_AI_CHECK !== "1")(
   "live Gemini matching quality",
   () => {
+    it("recognizes a general volunteer offer as compatible with a specific climate drive", async () => {
+      const source = "need a volunteer for climate change awareness drive";
+      const offer = "willing to do some volunteering work";
+      const roles = await Promise.all([interpret(source), interpret(offer)]);
+      expect(roles.map((role) => role.role)).toEqual(["organize", "join"]);
+      const decisions = await assessMatches(source, [
+        { key: "volunteer", text: offer },
+      ]);
+      expect(decisions.get("volunteer")).toBe(true);
+    }, 60000);
     it("distinguishes actual context from high but misleading embedding similarities", async () => {
       const results = await assessMatches("I want to learn acoustic guitar", [
         {

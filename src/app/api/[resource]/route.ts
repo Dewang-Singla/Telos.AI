@@ -13,7 +13,12 @@ import {
 } from "@/lib/validation";
 import { embed, interpret, assessMatches } from "@/lib/ai";
 import { createHash } from "node:crypto";
-import { compactHeading, fallbackInterpretation } from "@/lib/intent-context";
+import {
+  compactHeading,
+  contextRole,
+  fallbackInterpretation,
+} from "@/lib/intent-context";
+import { intentWriteMetadata } from "@/lib/intent-write";
 import type { PersonMatch, SocialPost } from "@/lib/types";
 
 export const dynamic = "force-dynamic";
@@ -134,7 +139,7 @@ async function prepareIntent(
   const requestKey = createHash("sha256")
     .update(
       JSON.stringify({
-        version: 3,
+        version: 4,
         body,
         automaticRequested,
         textModel: process.env.GEMINI_TEXT_MODEL,
@@ -200,7 +205,10 @@ async function prepareIntent(
   const candidate = intentSchema.safeParse({
     ...body,
     title: compactHeading(parsed.title, body.description),
-    role: body.role === "open" ? parsed.role : body.role,
+    role: contextRole(
+      body.role === "open" ? parsed.role : body.role,
+      body.description,
+    ),
     mode:
       auto && body.mode === "hybrid"
         ? parsed.mode === "in-person" &&
@@ -541,7 +549,10 @@ export async function POST(req: NextRequest, context: Context) {
           await prepareIntent(db, body, payload.automatic === true);
         const savedId = checked(
           await db.rpc("save_intent", {
-            payload: details,
+            payload: {
+              ...details,
+              ...intentWriteMetadata(body, payload.automatic === true),
+            },
             intent_uuid: id,
             lat: latitude,
             lng: longitude,
@@ -595,7 +606,10 @@ export async function POST(req: NextRequest, context: Context) {
         const prepared = await prepareIntent(db, body, true);
         const id = checked(
           await db.rpc("create_people_search", {
-            payload: prepared.details,
+            payload: {
+              ...prepared.details,
+              ...intentWriteMetadata(body, true),
+            },
             lat: prepared.latitude,
             lng: prepared.longitude,
             radius: prepared.radius_km,
