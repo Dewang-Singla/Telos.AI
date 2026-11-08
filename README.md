@@ -1,5 +1,7 @@
 # Telos
 
+[Live project](https://telos-ai-pink.vercel.app/) · [Database schema and setup](supabase/README.md) · [Matching design](MATCHING.md)
+
 Telos has two separate flows:
 
 - **Find people** (`/`, `/find`): write an intent, find matching people, and manage saved intents in the same workspace. The former `/intents` route redirects here. Qualified matches show the exact intent text for context. **Show on profile** is a separate, optional setting.
@@ -20,7 +22,7 @@ npm.cmd install
 npm.cmd run dev
 ```
 
-Use the printed localhost URL. There is no automatic demo fallback. Connect a Supabase project using [DEPLOYMENT.md](DEPLOYMENT.md); **all seven migrations (001–007) are required**. Run only migrations not already applied: 005 adds profile State/Country; 006 adds direction-aware matching and administrative demo provisioning; 007 makes match context consistent and reuses equivalent active searches. AI is optional. Supabase is connected locally through ignored .env.local; a public deployment and further authenticated cloud feature tests remain pending.
+Use the printed localhost URL. There is no automatic demo fallback. Copy `.env.example` to `.env.local` and configure your own Supabase project using [DEPLOYMENT.md](DEPLOYMENT.md). **A fresh database requires all ten migrations, in filename order, once each.** Run only pending migrations on an existing database. The schema and setup overview is in [supabase/README.md](supabase/README.md). AI is optional. The app has a public Vercel deployment; code on a fix branch may be newer than the live version until merged into `main` and deployed.
 
 ## Privacy and matching
 
@@ -28,7 +30,7 @@ The database stores intent rows behind owner-only RLS, except active intents exp
 
 `find_people` evaluates candidate intents inside the database and returns a permitted profile, online status, optional coarse distance and exact `matched_intent` text. It never returns another user's intent ID, coordinates, embeddings, constraints or timestamp. Results contain one entry per person, selecting their most complementary qualified intent. Ordering is online first, then complementary roles before peers, then newest intent and stable ID. Teachers precede fellow learners within each presence group. Hire/work, request/offer and organize/join are complementary; co-learners can connect, while hire/hire and work/work do not qualify. Mode, explicit skills for complementary providers, time, visibility, blocking and proximity apply before limits.
 
-With AI configured, the server extracts context and creates normalized 768-dimensional embeddings. Without compatible embeddings, SQL infers common English request/provider direction from text, with explicit Details roles taking precedence. Keyword matching removes role/boilerplate terms to avoid matching unrelated guitar/piano tutors just because both say tutor. A small set of word variants is normalized; this is rule-based, not general language understanding. No fabricated probabilities are shown. Anonymous discovery invalidations do not publish intent changes. Invitation source context stays in a private table.
+With AI configured, the server extracts context, creates normalized 768-dimensional embeddings and reviews actual intent pairs for relevance. SQL applies topic, role, access, time and location constraints before contextual review. Conservative lexical matching remains available if the provider fails. The interface reports AI or keyword matching. Submitting a search makes it discoverable without adding it to saved history; saving keeps it beyond the transient search expiry. No fabricated probabilities are shown. Anonymous discovery invalidations do not publish intent changes. Invitation source context stays in a private table. See [MATCHING.md](MATCHING.md) for the current pipeline and limitations.
 
 Reopening a saved intent is read-only until its text changes; edits preserve its ID and saved constraints. Equivalent active submissions are serialized/reused in the database without promoting their creation time. Existing duplicate rows are retained rather than automatically deleting their links/history.
 

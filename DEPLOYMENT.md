@@ -6,7 +6,7 @@ Workspace status: the application is deployed at https://telos-ai-pink.vercel.ap
 
 1. Visit [supabase.com/dashboard](https://supabase.com/dashboard), sign in, and create a free project named `telos`. Choose a region close to your expected users. Keep the database password in your password manager; the application does not need it.
 2. Wait until the project is ready. Open **SQL Editor → New query**.
-3. Run the seven files in `supabase/migrations` in filename order, once each. On this project, 001-004 were already applied; apply 005 if still pending, then 006 and `202611040007_match_context_and_search_reuse.sql`. Never rerun successful earlier migrations. Migration 005 adds optional profile State/Country; 006 adds role-aware retrieval and a service-role-only demo provisioner; 007 makes qualified intent context visible consistently and reuses equivalent active searches. Do not deploy this source without all seven migrations. Each file is transactional; fix any reported error before proceeding.
+3. For a fresh project, run all ten files in `supabase/migrations` in filename order, once each, through `202611080010_volunteers_and_save_identity.sql`. On an existing project, run only files not already successfully applied. Do not run the separate `supabase/admin` reset scripts during installation. Each migration is transactional; fix any reported error before proceeding. See [supabase/README.md](supabase/README.md) for the schema overview.
 4. Open **Project settings → API** (or the project's Connect/API keys panel). Copy the **Project URL** and **publishable key**. A legacy anon key is also compatible. Never use a secret or service-role key for `NEXT_PUBLIC_` variables.
 5. In this workspace, copy the environment template:
 
