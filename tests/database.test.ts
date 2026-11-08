@@ -130,6 +130,114 @@ afterAll(async () => {
   await db?.close();
 });
 
+describe("one-time demo-preserving administrator reset", () => {
+  const resetSql = () =>
+    readFileSync(resolve("supabase/admin/reset_non_demo.sql"), "utf8");
+  async function markDemo() {
+    await db.exec(
+      "select set_config('request.jwt.claim.role','service_role',false)",
+    );
+    try {
+      await query("update public.profiles set is_demo=true where id=$1", [B]);
+      await query(
+        "update auth.users set raw_app_meta_data='{}'::jsonb || jsonb_build_object('telos_demo','v1') where id=$1",
+        [B],
+      );
+    } finally {
+      await db.exec("select set_config('request.jwt.claim.role','',false)");
+    }
+  }
+  it("deletes real logins and app activity, preserving demo content and schema", async () => {
+    await markDemo();
+    const demoIntent = await intent(B, "I offer guitar lessons for beginners");
+    const demoPost = await social(B, "A fictional demo update");
+    await intent(A, "I need guitar lessons for beginners");
+    await social(A, "A real test update");
+    await asUser(A, () =>
+      query("select public.send_connection_request($1,'A test request')", [B]),
+    );
+    const request = (
+      await query("select id from public.connection_requests")
+    )[0].id;
+    await asUser(B, () =>
+      query("select public.respond_request($1,true)", [request]),
+    );
+    const conversation = (await query("select id from public.conversations"))[0]
+      .id;
+    await asUser(A, () =>
+      query(
+        "insert into public.messages(conversation_id,sender_id,body) values($1,$2,'Test message')",
+        [conversation, A],
+      ),
+    );
+    await asUser(A, () => query("select public.set_follow($1,true)", [B]));
+    await db.exec(resetSql());
+    expect(await query("select id from auth.users")).toEqual([{ id: B }]);
+    expect(await query("select id from public.profiles")).toEqual([{ id: B }]);
+    expect(await query("select id from public.intents")).toEqual([
+      { id: demoIntent },
+    ]);
+    expect(await query("select id from public.posts")).toEqual([
+      { id: demoPost },
+    ]);
+    for (const table of [
+      "connection_requests",
+      "conversations",
+      "messages",
+      "notifications",
+      "follows",
+      "member_presence",
+      "discovery_events",
+    ]) {
+      expect(await query(`select * from public.${table}`)).toEqual([]);
+    }
+    expect(await query("select * from private.rate_limits")).toEqual([]);
+    expect(await query("select * from private.intent_request_keys")).toEqual(
+      [],
+    );
+    expect(await query("select intent_id from private.intent_context")).toEqual(
+      [{ intent_id: demoIntent }],
+    );
+    // The reset preserves the schema and permits new signup/profile creation.
+    await query("insert into auth.users(id) values($1)", [A]);
+    await asUser(A, () =>
+      query(
+        "insert into public.profiles(id,name,username) values($1,'Fresh User','fresh_user')",
+        [A],
+      ),
+    );
+    expect(await intent(A, "I need guitar lessons for beginners")).toBeTruthy();
+  });
+  it("aborts if no demo identity can be identified", async () => {
+    try {
+      await expect(db.exec(resetSql())).rejects.toThrow(
+        "no marked demo accounts",
+      );
+    } finally {
+      await db.exec("rollback");
+    }
+    expect(await query("select id from auth.users")).toHaveLength(3);
+    expect(await query("select id from public.profiles")).toHaveLength(3);
+  });
+  it("aborts before deleting data when real uploads still need Storage API cleanup", async () => {
+    await markDemo();
+    await query(
+      "insert into storage.objects(bucket_id,name,owner_id) values('profile-media',$1,$2)",
+      [`${A}/avatar.png`, A],
+    );
+    try {
+      await expect(db.exec(resetSql())).rejects.toThrow(
+        "remove non-demo uploads",
+      );
+    } finally {
+      await db.exec("rollback");
+    }
+    expect(await query("select id from auth.users")).toHaveLength(3);
+    expect(await query("select id from public.profiles")).toHaveLength(3);
+    expect(await query("select id from storage.objects")).toHaveLength(1);
+  });
+});
+
 describe("database privacy and independent posting", () => {
   it("matches the exact climate-volunteer pair in both directions with legacy AI roles", async () => {
     const request = await intent(
