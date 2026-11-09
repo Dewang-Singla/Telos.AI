@@ -1,6 +1,6 @@
 # Intent matching
 
-Migrations 009 and 010 are required for this version. This project's cloud database already has 009; apply only `202611080010_volunteers_and_save_identity.sql` before deploying this follow-up.
+Migrations 009 and 010 are required for this version. On 9 November 2026, this project's owner confirmed all read-only migration-010 checks returned true in Supabase; do not rerun successful migrations. The check is available in `supabase/admin/check_migration_010.sql`.
 
 ## Search lifecycle
 

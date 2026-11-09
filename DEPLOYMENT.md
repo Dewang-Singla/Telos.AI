@@ -1,6 +1,6 @@
 # Connect Telos and publish it
 
-Workspace status: the application is deployed at https://telos-ai-pink.vercel.app with Supabase and Gemini configured. The public site still serves the earlier matching bundle; migration 009 is already available in the cloud database. Apply only `supabase/migrations/202611080010_volunteers_and_save_identity.sql`, then merge the matching fix branch into main to trigger Vercel deployment. Do not rerun successful earlier migrations. The update preserves the city-entry/device-location flow. Cloud two-account delivery, read counts, uploads and recovery still need end-to-end testing.
+Workspace status: the application is deployed at https://telos-ai-pink.vercel.app with Supabase and Gemini configured. On 9 November 2026, the owner confirmed every check in `supabase/admin/check_migration_010.sql` returned true in the cloud project. Migrations 009 and 010 are installed; do not rerun them. This matching release is ready for deployment through GitHub main and preserves the city-entry/device-location flow. Cloud two-account matching, delivery, read counts, uploads and recovery still need end-to-end testing after deployment.
 
 ## 1. Create Supabase
 
