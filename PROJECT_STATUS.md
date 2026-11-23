@@ -1,6 +1,6 @@
 # Project status — 23 November 2026
 
-The pilot MVP upgrade is being prepared on `feat/pilot-mvp`. Production remains on the previously deployed migration-010 release until migration 011 is installed and this branch is merged into main. Migration 010 was confirmed installed and its release was verified on Vercel on 9 November. Do not rerun it or run administrator reset tools as part of this upgrade.
+The pilot MVP upgrade was built and tested on `feat/pilot-mvp`. On 23 November 2026, the owner confirmed every migration-011 check returned true in Supabase. The release is ready for main and Vercel deployment; its database prerequisite is complete. Do not rerun successful migrations or run administrator reset tools as part of this upgrade.
 
 ## Product scope
 

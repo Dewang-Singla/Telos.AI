@@ -1,6 +1,6 @@
 # Connect Telos and publish it
 
-Workspace status: the application is deployed at https://telos-ai-pink.vercel.app with Supabase and Gemini configured. Migration 010 and its matching release were confirmed on 9 November 2026. The new pilot upgrade on `feat/pilot-mvp` requires migration `202611230011_pilot_feedback_and_progress.sql` before production deployment. It preserves city entry and device-location choices. Run `supabase/admin/check_migration_011.sql` afterward. Do not rerun earlier migrations. Cloud two-account matching, feedback, outcomes, chat, uploads and recovery still need end-to-end testing for this release.
+Workspace status: the application is deployed at https://telos-ai-pink.vercel.app with Supabase and Gemini configured. On 23 November 2026, the owner confirmed all results in `supabase/admin/check_migration_011.sql` were true after installing migration 011. The pilot upgrade is ready to deploy through GitHub main. It preserves city entry and device-location choices. Do not rerun successful migrations. Cloud two-account matching, feedback, outcomes, chat, uploads and recovery still need end-to-end testing for this release.
 
 ## 1. Create Supabase
 

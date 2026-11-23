@@ -1,6 +1,6 @@
 # Intent matching
 
-Migrations 009-011 are required for this version. On 9 November 2026, this project's owner confirmed migration 010 was installed. The pilot upgrade adds 011 for private match feedback, relevance-first ordering and connection outcomes. Do not rerun successful migrations.
+Migrations 009-011 are required for this version. On 23 November 2026, this project's owner confirmed all migration-011 checks returned true in Supabase. Migration 011 adds private match feedback, relevance-first ordering and connection outcomes. Do not rerun successful migrations.
 
 ## Search lifecycle
 
