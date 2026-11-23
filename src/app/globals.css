@@ -545,6 +545,13 @@ p {
 }
 .profile-preview {
   padding: 22px 20px;
+  display: flex;
+  flex-direction: column;
+  align-items: flex-start;
+}
+.profile-preview > a:not(.secondary-button) {
+  max-width: 100%;
+  overflow-wrap: anywhere;
 }
 .profile-preview > .avatar {
   margin-bottom: 16px;
