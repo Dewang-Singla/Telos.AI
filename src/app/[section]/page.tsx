@@ -13,6 +13,7 @@ const sections = [
   "notifications",
   "settings",
   "profile",
+  "progress",
 ];
 export default async function Page({
   params,
@@ -46,5 +47,8 @@ export default async function Page({
   if (section === "welcome") return <Welcome />;
   if (section === "feed") return <Telos section="home" />;
   if (!sections.includes(section)) notFound();
-  return <Telos section={section} />;
+  const values = await searchParams;
+  const intent =
+    typeof values.intent === "string" ? values.intent.slice(0, 3000) : "";
+  return <Telos section={section} initialIntent={intent} />;
 }

@@ -19,6 +19,7 @@ import {
   fallbackInterpretation,
 } from "@/lib/intent-context";
 import { intentWriteMetadata } from "@/lib/intent-write";
+import { explainMatch } from "@/lib/discovery";
 import type { PersonMatch, SocialPost } from "@/lib/types";
 
 export const dynamic = "force-dynamic";
@@ -276,6 +277,8 @@ export async function GET(req: NextRequest, context: Context) {
     const { db, user } = await session();
     const q = req.nextUrl.searchParams;
     switch (resource) {
+      case "progress":
+        return privateJson(checked(await db.rpc("my_progress")));
       case "profile":
         return privateJson(
           checked(
@@ -523,6 +526,44 @@ export async function POST(req: NextRequest, context: Context) {
     const payload = await json(req);
     const { db, user } = await session();
     switch (resource) {
+      case "match-feedback": {
+        const body = z
+          .object({
+            source_id: uuid,
+            candidate_id: uuid,
+            candidate_text: z.string().min(3).max(3000),
+            verdict: z.enum(["helpful", "not_relevant", "clear"]),
+            reason: z
+              .enum(["", "different_goal", "wrong_role", "location", "other"])
+              .default(""),
+          })
+          .parse(payload);
+        checked(
+          await db.rpc("record_match_feedback", {
+            source_uuid: body.source_id,
+            candidate_uuid: body.candidate_id,
+            candidate_text: body.candidate_text,
+            verdict_text: body.verdict,
+            reason_text: body.reason,
+          }),
+        );
+        return privateJson({ ok: true });
+      }
+      case "connection-outcome": {
+        const body = z
+          .object({
+            request_id: uuid,
+            outcome: z.enum(["useful", "not_yet", "not_a_fit"]),
+          })
+          .parse(payload);
+        checked(
+          await db.rpc("record_connection_outcome", {
+            request_uuid: body.request_id,
+            outcome_text: body.outcome,
+          }),
+        );
+        return privateJson({ ok: true });
+      }
       case "profile": {
         const body = profileSchema.parse(payload);
         return privateJson(
@@ -770,18 +811,25 @@ export async function POST(req: NextRequest, context: Context) {
           }
         }
         const people = candidates
-          .filter((candidate, index) =>
-            candidate.reviewed
-              ? candidate.relevant === true
-              : decisions.has(String(index))
-                ? decisions.get(String(index)) === true
-                : candidate.lexical_confidence >= 0.3,
+          .filter(
+            (candidate, index) =>
+              candidate.feedback !== "not_relevant" &&
+              (candidate.reviewed
+                ? candidate.relevant === true
+                : decisions.has(String(index))
+                  ? decisions.get(String(index)) === true
+                  : candidate.lexical_confidence >= 0.3),
           )
           .map((candidate) => ({
             profile: candidate.profile,
             is_online: Boolean(candidate.is_online),
             distance_km: candidate.distance_km ?? null,
             matched_intent: candidate.matched_intent,
+            explanation: explainMatch(
+              context.source,
+              candidate.matched_intent || "",
+            ),
+            feedback: candidate.feedback === "helpful" ? "helpful" : null,
           }));
         return privateJson({
           people,

@@ -5,7 +5,7 @@ The database source is versioned here. The SQL migrations define the schema, con
 ## Recreate the database
 
 1. Create a separate Supabase project for review or testing.
-2. Run every SQL file in [migrations](migrations/) in filename order, from `202611030001_telos.sql` through `202611080010_volunteers_and_save_identity.sql`, once each. These ten files together define the current database. Run only pending files on an existing database.
+2. Run every SQL file in [migrations](migrations/) in filename order, from `202611030001_telos.sql` through `202611230011_pilot_feedback_and_progress.sql`, once each. These eleven files together define the current database. Run only pending files on an existing database.
 3. Configure local variables using [../.env.example](../.env.example). Follow [../AUTH_SETUP.md](../AUTH_SETUP.md) for email/Google sign-in and [../DEPLOYMENT.md](../DEPLOYMENT.md) for hosting.
 4. Optionally run `npm.cmd run seed:demo` from the repository root to create fictional, offline demo content. See [../DEMO_INTENTS.md](../DEMO_INTENTS.md). The seed requires your own project's administrator key at a hidden local prompt.
 
@@ -19,6 +19,7 @@ Supabase manages the `auth` and `storage` service schemas; the migrations config
 | Discovery | `public.intents`, `private.intent_context` | Active/saved intentions, private coordinates and 768-dimensional embeddings. |
 | Matching state | `private.search_sessions`, `private.search_generations`, `private.intent_request_keys` | Ordered requests and reuse of equivalent submissions. |
 | AI cache | `private.intent_artifacts`, `private.match_reviews` | Owner-scoped derived artifacts and contextual pair decisions. |
+| Private pilot feedback | `private.discovery_feedback`, `private.connection_outcomes`, `private.product_events` | Owner-scoped match preferences, participant-only outcomes and real-member event records. |
 | Relationships | `public.connection_requests`, `public.follows`, `public.blocks`, `private.request_context` | Invitations, following, blocking and private invitation context. |
 | Chat | `public.conversations`, `public.conversation_members`, `public.messages` | Member-restricted chat history and per-conversation read cursors. |
 | Feed | `public.posts`, `public.post_likes`, `public.post_comments`, `public.post_saves` | Independent social posts and interactions. |

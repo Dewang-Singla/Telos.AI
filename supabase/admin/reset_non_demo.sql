@@ -68,6 +68,7 @@ begin
   'private.presence_sessions','public.member_presence','private.rate_limits',
   'private.people_searches','private.intent_artifacts','private.match_reviews',
   'private.search_sessions','private.search_generations','private.intent_request_keys',
+  'private.discovery_feedback','private.connection_outcomes','private.product_events',
   'public.feed_events','public.relationship_events','public.discovery_events'
  ] loop
   if to_regclass(relation) is not null then execute format('delete from %s',to_regclass(relation)); end if;

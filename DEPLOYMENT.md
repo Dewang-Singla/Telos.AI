@@ -1,12 +1,12 @@
 # Connect Telos and publish it
 
-Workspace status: the application is deployed at https://telos-ai-pink.vercel.app with Supabase and Gemini configured. On 9 November 2026, the owner confirmed every check in `supabase/admin/check_migration_010.sql` returned true in the cloud project. Migrations 009 and 010 are installed; do not rerun them. This matching release is ready for deployment through GitHub main and preserves the city-entry/device-location flow. Cloud two-account matching, delivery, read counts, uploads and recovery still need end-to-end testing after deployment.
+Workspace status: the application is deployed at https://telos-ai-pink.vercel.app with Supabase and Gemini configured. Migration 010 and its matching release were confirmed on 9 November 2026. The new pilot upgrade on `feat/pilot-mvp` requires migration `202611230011_pilot_feedback_and_progress.sql` before production deployment. It preserves city entry and device-location choices. Run `supabase/admin/check_migration_011.sql` afterward. Do not rerun earlier migrations. Cloud two-account matching, feedback, outcomes, chat, uploads and recovery still need end-to-end testing for this release.
 
 ## 1. Create Supabase
 
 1. Visit [supabase.com/dashboard](https://supabase.com/dashboard), sign in, and create a free project named `telos`. Choose a region close to your expected users. Keep the database password in your password manager; the application does not need it.
 2. Wait until the project is ready. Open **SQL Editor → New query**.
-3. For a fresh project, run all ten files in `supabase/migrations` in filename order, once each, through `202611080010_volunteers_and_save_identity.sql`. On an existing project, run only files not already successfully applied. Do not run the separate `supabase/admin` reset scripts during installation. Each migration is transactional; fix any reported error before proceeding. See [supabase/README.md](supabase/README.md) for the schema overview.
+3. For a fresh project, run all eleven files in `supabase/migrations` in filename order, once each, through `202611230011_pilot_feedback_and_progress.sql`. On an existing project, run only files not already successfully applied. Do not run the separate `supabase/admin` reset scripts during installation. Each migration is transactional; fix any reported error before proceeding. See [supabase/README.md](supabase/README.md) for the schema overview.
 4. Open **Project settings → API** (or the project's Connect/API keys panel). Copy the **Project URL** and **publishable key**. A legacy anon key is also compatible. Never use a secret or service-role key for `NEXT_PUBLIC_` variables.
 5. In this workspace, copy the environment template:
 

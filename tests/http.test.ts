@@ -17,6 +17,7 @@ describe.skipIf(!origin)("HTTP integration (no configured backend)", () => {
     "/connections",
     "/notifications",
     "/profile",
+    "/progress",
     "/settings",
     "/login",
     "/signup",
@@ -28,6 +29,17 @@ describe.skipIf(!origin)("HTTP integration (no configured backend)", () => {
     expect(r.status).toBe(200);
     expect(r.headers.get("x-content-type-options")).toBe("nosniff");
     expect(await r.text()).toContain("Telos");
+  });
+  it("introduces the product publicly and carries example intentions into discovery", async () => {
+    const html = await (await fetch(`${origin}/`)).text();
+    expect(html).toContain("Start with a purpose");
+    expect(html).toContain("Illustrative example");
+    expect(html).toContain('href="/find?intent=');
+    const find = await (
+      await fetch(`${origin}/find?intent=I%20want%20to%20learn%20guitar`)
+    ).text();
+    expect(find).toContain("I want to learn guitar");
+    expect(find).toContain("What do you have in mind?");
   });
   it("redirects the former intent section into the single Find people workspace", async () => {
     const r = await fetch(`${origin}/intents`, { redirect: "manual" });

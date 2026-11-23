@@ -172,7 +172,9 @@ test("private searches find people, social posts stay separate, and chat persist
         .locator(".community-post")
         .filter({ hasText: `Public update ${suffix}` }),
     ).toBeVisible();
-    await match.getByRole("button", { name: "Connect", exact: true }).click();
+    await match
+      .getByRole("button", { name: "Start a conversation", exact: true })
+      .click();
     const response = a.waitForResponse(
       (r) =>
         r.url().endsWith("/api/connections") && r.request().method() === "POST",

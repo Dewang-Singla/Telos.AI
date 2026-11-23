@@ -2,10 +2,13 @@
 
 [Live project](https://telos-ai-pink.vercel.app/) · [Database schema and setup](supabase/README.md) · [Matching design](MATCHING.md)
 
-Telos has two separate flows:
+Telos is a common place to connect around what people want to learn, build, offer, join or do. The public homepage introduces the product; `/find` is the discovery workspace.
 
-- **Find people** (`/`, `/find`): write an intent, find matching people, and manage saved intents in the same workspace. The former `/intents` route redirects here. Qualified matches show the exact intent text for context. **Show on profile** is a separate, optional setting.
+The app has three connected flows:
+
+- **Find people** (`/find`): write an intent, use guided examples, review goal-based explanations and exact match text, privately mark useful results or hide an unsuitable intention, and send a contextual invitation. Saving remains manual. The former `/intents` route redirects here. **Show on profile** is a separate, optional setting.
 - **Feed** (`/feed`): publish ordinary text or photo posts, like, comment, and save. All, Following and Connections views show eligible posts newest first. Creating an intent never creates a social post. These are explicit filters, not a personalized recommendation model.
+- **My progress** (`/progress`): see your own active intentions, real-member connections and conversations, then privately report whether a connection was useful. Demo accounts are excluded from connection/outcome totals. Profile-readiness suggestions keep location optional.
 
 Profiles support a cover, photo, bio, interests, optional skills/website, arbitrary labeled details, and optional current intents. City, State and Country are independent optional fields: users can provide any combination or leave all three blank. Displays join only non-empty fields. No professional information is required.
 
@@ -22,13 +25,13 @@ npm.cmd install
 npm.cmd run dev
 ```
 
-Use the printed localhost URL. There is no automatic demo fallback. Copy `.env.example` to `.env.local` and configure your own Supabase project using [DEPLOYMENT.md](DEPLOYMENT.md). **A fresh database requires all ten migrations, in filename order, once each.** Run only pending migrations on an existing database. The schema and setup overview is in [supabase/README.md](supabase/README.md). AI is optional. The app has a public Vercel deployment; code on a fix branch may be newer than the live version until merged into `main` and deployed.
+Use the printed localhost URL. There is no automatic demo fallback. Copy `.env.example` to `.env.local` and configure your own Supabase project using [DEPLOYMENT.md](DEPLOYMENT.md). **A fresh database requires all eleven migrations, in filename order, once each.** The pilot upgrade adds `202611230011_pilot_feedback_and_progress.sql`; apply only pending migrations on an existing database. The schema and setup overview is in [supabase/README.md](supabase/README.md). AI is optional. The app has a public Vercel deployment; code on a feature branch may be newer than the live version until merged into `main` and deployed.
 
 ## Privacy and matching
 
 The database stores intent rows behind owner-only RLS, except active intents explicitly shown on a profile. Independently, qualified matching results return the exact selected intent description for context, for both existing and new searches. Direct table access does not become public. Profile display remains optional, and searches are never copied into posts.
 
-`find_people` evaluates candidate intents inside the database and returns a permitted profile, online status, optional coarse distance and exact `matched_intent` text. It never returns another user's intent ID, coordinates, embeddings, constraints or timestamp. Results contain one entry per person, selecting their most complementary qualified intent. Ordering is online first, then complementary roles before peers, then newest intent and stable ID. Teachers precede fellow learners within each presence group. Hire/work, request/offer and organize/join are complementary; co-learners can connect, while hire/hire and work/work do not qualify. Mode, explicit skills for complementary providers, time, visibility, blocking and proximity apply before limits.
+`find_people` evaluates candidate intents inside the database and returns a permitted profile, online status, optional coarse distance and exact `matched_intent` text. It never returns another user's intent ID, coordinates, embeddings, constraints or timestamp. Results contain one entry per person, selecting their most complementary qualified intent. Complementary roles and topic fit precede online status, then newer intentions break remaining ties. A suitable offline teacher can precede an online fellow learner. Hire/work, request/offer and organize/join are complementary; co-learners can connect, while hire/hire and work/work do not qualify. Mode, explicit skills for complementary providers, time, visibility, blocking and proximity apply before limits.
 
 With AI configured, the server extracts context, creates normalized 768-dimensional embeddings and reviews actual intent pairs for relevance. SQL applies topic, role, access, time and location constraints before contextual review. Conservative lexical matching remains available if the provider fails. The interface reports AI or keyword matching. Submitting a search makes it discoverable without adding it to saved history; saving keeps it beyond the transient search expiry. No fabricated probabilities are shown. Anonymous discovery invalidations do not publish intent changes. Invitation source context stays in a private table. See [MATCHING.md](MATCHING.md) for the current pipeline and limitations.
 
@@ -94,3 +97,7 @@ Cloud integration tests require a **disposable** Supabase project with all migra
 - `tests/database.test.ts`: actual local database integration suite.
 
 `npm.cmd run export:handoff` creates a verified source ZIP under `backups/`, excluding credentials, environment files, dependencies and generated output. See [PROJECT_STATUS.md](PROJECT_STATUS.md) for verified results and external blockers.
+
+## Pilot measurement
+
+Migration 011 records real-member invitations, accepted invitations, first participation in conversations and first useful-connection self-reports. Events are generated by database triggers/functions, rather than trusting browser-supplied analytics. They contain IDs, event names and timestamps, not messages or search text. Demo interactions do not contribute. The administrator-only [pilot report](supabase/admin/pilot_metrics.sql) includes two-way conversations and aggregate 30-day activity. It is not a retention, revenue or verified-customer-success report; event history starts when 011 is installed. See [PILOT.md](PILOT.md) for rollout and evaluation.

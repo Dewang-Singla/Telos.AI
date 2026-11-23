@@ -1,6 +1,6 @@
 # Intent matching
 
-Migrations 009 and 010 are required for this version. On 9 November 2026, this project's owner confirmed all read-only migration-010 checks returned true in Supabase; do not rerun successful migrations. The check is available in `supabase/admin/check_migration_010.sql`.
+Migrations 009-011 are required for this version. On 9 November 2026, this project's owner confirmed migration 010 was installed. The pilot upgrade adds 011 for private match feedback, relevance-first ordering and connection outcomes. Do not rerun successful migrations.
 
 ## Search lifecycle
 
@@ -16,7 +16,11 @@ Migrations 009 and 010 are required for this version. On 9 November 2026, this p
 2. PostgreSQL retrieves a bounded pool using normalized subjects and pgvector. Generic boilerplate, unrelated named subjects, inactive/expired searches, blocks, profile access, incompatible roles and hard requirements are excluded first.
 3. Gemini checks pairs of actual intent descriptions. Similar embeddings alone are insufficient: Python/Java tutoring and guitar/piano lessons can have deceptively high cosine similarities.
 4. Pair decisions and owner-scoped derived artifacts are cached for 24 hours. Candidate/source text changes invalidate pair decisions. When the provider is unavailable, only conservative lexical matches are displayed and the UI reports Keyword matching.
-5. Qualified people retain online-first, complementary-role, then newest-intent ordering. One qualifying intent is selected per person. Scores, vectors and coordinates are not exposed in match responses.
+5. Qualified people are ordered by complementary-role affinity, lexical and semantic fit, online status, then recency. One qualifying intent is selected per person. Scores, vectors and coordinates are not exposed in match responses. Explanations describe the relationship between the two intention texts; they are not verified qualifications or probability estimates.
+
+## Member feedback
+
+Helpful/not-relevant feedback is private to its author. Hiding an intention removes that text-pair from that member's matching results, without blocking the person or affecting other members. Undo clears the feedback. A changed source or candidate description is evaluated independently. Feedback is not used to train a shared model. Connection outcome reports are also private, participant-scoped self-reports, not public ratings.
 
 Volunteering requests and offers are normalized to organizer/participant roles, including older intents classified as hiring/work. A broad volunteering offer can qualify for a specific drive; the contextual review still checks restrictions and cause compatibility. Review-policy and interpretation-cache versions invalidate earlier decisions for these cases.
 

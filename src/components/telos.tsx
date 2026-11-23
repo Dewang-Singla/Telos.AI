@@ -19,6 +19,7 @@ import {
   UserRound,
   Handshake,
   X,
+  Target,
   type LucideIcon,
 } from "lucide-react";
 import { api } from "@/lib/api";
@@ -57,6 +58,9 @@ const SettingsView = dynamic(
   () => import("./views").then((m) => m.SettingsView),
   { loading: () => <Loading /> },
 );
+const Progress = dynamic(() => import("./progress").then((m) => m.Progress), {
+  loading: () => <Loading />,
+});
 
 const navigation: {
   id: string;
@@ -65,6 +69,7 @@ const navigation: {
   icon: LucideIcon;
 }[] = [
   { id: "find", label: "Find people", href: "/find", icon: Search },
+  { id: "progress", label: "My progress", href: "/progress", icon: Target },
   { id: "home", label: "Feed", href: "/feed", icon: LayoutGrid },
   { id: "messages", label: "Messages", href: "/messages", icon: MessageCircle },
   {
@@ -94,6 +99,7 @@ const pageNames: Record<string, string> = {
   saved: "Saved",
   profile: "Profile",
   settings: "Settings",
+  progress: "My progress",
 };
 type ReportTarget = { profile: Profile; post?: SocialPost };
 
@@ -101,10 +107,12 @@ export function Telos({
   section,
   initialQuery = "",
   initialSearchTab = "people",
+  initialIntent = "",
 }: {
   section: string;
   initialQuery?: string;
   initialSearchTab?: "people" | "posts";
+  initialIntent?: string;
 }) {
   const {
     user,
@@ -143,7 +151,11 @@ export function Telos({
     [reason, setReason] = useState("");
   const isFind = ["find", "matches", "nearby"].includes(section),
     isFeed = section === "home" || section === "saved",
-    wide = isFind || section === "messages" || section === "settings";
+    wide =
+      isFind ||
+      section === "messages" ||
+      section === "settings" ||
+      section === "progress";
   const refresh = useCallback(() => setRevision((r) => r + 1), []);
   const selectedProfileId = selectedProfile?.id;
   useEffect(() => {
@@ -285,7 +297,7 @@ export function Telos({
     setEditPost(post);
     setCompose(true);
   }
-  async function connect(person: Profile, sourceId?: string) {
+  async function connect(person: Profile, sourceId?: string, opener?: string) {
     if (!user) {
       window.location.assign("/login");
       return;
@@ -316,7 +328,7 @@ export function Telos({
       toast((e as Error).message);
       return;
     }
-    setNote("");
+    setNote(opener || "");
     setContact({ profile: person, sourceId });
   }
   async function viewProfile(person: Profile) {
@@ -364,6 +376,11 @@ export function Telos({
             <Link
               href={item.href}
               key={item.id}
+              aria-current={
+                (item.id === "find" ? isFind : section === item.id)
+                  ? "page"
+                  : undefined
+              }
               className={
                 (item.id === "find" ? isFind : section === item.id)
                   ? "selected"
@@ -512,6 +529,8 @@ export function Telos({
           )}
           {isFind && (
             <FindPeople
+              key={user?.id || "visitor"}
+              initialText={initialIntent}
               initialNearby={section === "nearby"}
               onProfile={(p) => void viewProfile(p)}
               onConnect={connect}
@@ -627,6 +646,7 @@ export function Telos({
             />
           )}
           {section === "messages" && <Messages />}
+          {section === "progress" && <Progress key={user?.id || "visitor"} />}
           {section === "connections" && (
             <Connections
               openProfile={(p) => void viewProfile(p)}

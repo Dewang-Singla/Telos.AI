@@ -130,6 +130,215 @@ afterAll(async () => {
   await db?.close();
 });
 
+describe("pilot feedback, outcomes and real-member progress", () => {
+  it("uses online presence to break equally relevant goal matches", async () => {
+    const source = await intent(A, "I want to learn guitar", { role: "learn" });
+    await intent(B, "I teach guitar to beginners", { role: "teach" });
+    await intent(C, "I teach guitar to beginners", { role: "teach" });
+    await query(
+      "insert into public.member_presence(user_id,last_seen_at) values($1,now())",
+      [C],
+    );
+    const people = await asUser(A, () =>
+      query("select * from public.find_people($1)", [source]),
+    );
+    expect(people.map((p) => (p.profile as { id: string }).id)).toEqual([C, B]);
+  });
+  it("keeps feedback private, scopes hiding to the actual source text and supports undo", async () => {
+    const source = await intent(A, "I want to learn guitar", { role: "learn" });
+    const text = "I teach guitar to beginners";
+    const provider = await intent(B, text, { role: "teach" });
+    const record = (verdict: string) =>
+      asUser(A, () =>
+        query(
+          "select public.record_match_feedback($1,$2,$3,$4,'different_goal')",
+          [source, B, text, verdict],
+        ),
+      );
+    await record("helpful");
+    const context = (
+      await asUser(A, () =>
+        query("select public.matching_context($1) value", [source]),
+      )
+    )[0].value as { candidates: { feedback: string }[] };
+    expect(context.candidates[0].feedback).toBe("helpful");
+    await record("not_relevant");
+    expect(
+      await asUser(A, () =>
+        query("select * from public.find_people($1)", [source]),
+      ),
+    ).toHaveLength(0);
+    expect(
+      await asUser(B, () =>
+        query("select * from public.find_people($1)", [provider]),
+      ),
+    ).toHaveLength(1);
+    await expect(
+      asUser(B, () => query("select * from private.discovery_feedback")),
+    ).rejects.toThrow();
+    await expect(
+      asUser(C, () =>
+        query("select public.record_match_feedback($1,$2,$3,'helpful')", [
+          source,
+          B,
+          text,
+        ]),
+      ),
+    ).rejects.toThrow();
+    await expect(
+      asUser(A, () =>
+        query(
+          "select public.record_match_feedback($1,$2,'A fabricated private intention','helpful')",
+          [source, B],
+        ),
+      ),
+    ).rejects.toThrow();
+    await record("clear");
+    expect(
+      await asUser(A, () =>
+        query("select * from public.find_people($1)", [source]),
+      ),
+    ).toHaveLength(1);
+    await record("not_relevant");
+    await asUser(A, () =>
+      query(
+        "update public.intents set description='I want to learn guitar with someone patient' where id=$1",
+        [source],
+      ),
+    );
+    expect(
+      await asUser(A, () =>
+        query("select * from public.find_people($1)", [source]),
+      ),
+    ).toHaveLength(1);
+  });
+  it("counts real activity once and isolates each participant's connection outcome", async () => {
+    await asUser(A, () =>
+      query(
+        "select public.send_connection_request($1,'Would like to connect')",
+        [B],
+      ),
+    );
+    const request = (
+      await query("select id from public.connection_requests")
+    )[0].id;
+    await expect(
+      asUser(A, () =>
+        query("select public.record_connection_outcome($1,'useful')", [
+          request,
+        ]),
+      ),
+    ).rejects.toThrow();
+    await asUser(B, () =>
+      query("select public.respond_request($1,true)", [request]),
+    );
+    const conversation = (await query("select id from public.conversations"))[0]
+      .id;
+    for (const body of ["First message", "Second message"])
+      await asUser(A, () =>
+        query(
+          "insert into public.messages(conversation_id,sender_id,body) values($1,$2,$3)",
+          [conversation, A, body],
+        ),
+      );
+    await asUser(A, () =>
+      query("select public.record_connection_outcome($1,'useful')", [request]),
+    );
+    await asUser(A, () =>
+      query("select public.record_connection_outcome($1,'useful')", [request]),
+    );
+    await expect(
+      asUser(C, () =>
+        query("select public.record_connection_outcome($1,'useful')", [
+          request,
+        ]),
+      ),
+    ).rejects.toThrow();
+    const own = (
+      await asUser(A, () => query("select public.my_progress() value"))
+    )[0].value;
+    expect(own).toMatchObject({
+      sent_requests: 1,
+      accepted_requests: 1,
+      conversations: 1,
+      useful_connections: 1,
+    });
+    const peer = (
+      await asUser(B, () => query("select public.my_progress() value"))
+    )[0].value as {
+      useful_connections: number;
+      connections: { outcome: string | null }[];
+    };
+    expect(peer.useful_connections).toBe(0);
+    expect(peer.connections[0].outcome).toBeNull();
+    expect(
+      (await asUser(C, () => query("select public.my_progress() value")))[0]
+        .value,
+    ).toMatchObject({
+      sent_requests: 0,
+      accepted_requests: 0,
+      conversations: 0,
+      useful_connections: 0,
+      connections: [],
+    });
+    expect(
+      await query(
+        "select event_name from private.product_events order by event_name",
+      ),
+    ).toEqual([
+      { event_name: "connection_useful" },
+      { event_name: "conversation_participated" },
+      { event_name: "invitation_accepted" },
+      { event_name: "invitation_sent" },
+    ]);
+    await expect(
+      asUser(A, () => query("select * from private.product_events")),
+    ).rejects.toThrow();
+    await expect(
+      asUser(A, () => query("select * from private.connection_outcomes")),
+    ).rejects.toThrow();
+    const metrics = (
+      await query(
+        readFileSync(resolve("supabase/admin/pilot_metrics.sql"), "utf8"),
+      )
+    )[0];
+    expect(Number(metrics.real_profiles)).toBe(3);
+    expect(Number(metrics.invitations_sent_30d)).toBe(1);
+  });
+  it("excludes fictional demo connections from outcomes and event totals", async () => {
+    await db.exec(
+      "select set_config('request.jwt.claim.role','service_role',false)",
+    );
+    try {
+      await query("update public.profiles set is_demo=true where id=$1", [B]);
+    } finally {
+      await db.exec("select set_config('request.jwt.claim.role','',false)");
+    }
+    await asUser(A, () =>
+      query("select public.send_connection_request($1,'A demo request')", [B]),
+    );
+    const request = (
+      await query("select id from public.connection_requests")
+    )[0].id;
+    await asUser(B, () =>
+      query("select public.respond_request($1,true)", [request]),
+    );
+    await asUser(A, () =>
+      query("select public.record_connection_outcome($1,'useful')", [request]),
+    );
+    expect(
+      (await asUser(A, () => query("select public.my_progress() value")))[0]
+        .value,
+    ).toMatchObject({
+      sent_requests: 0,
+      accepted_requests: 0,
+      useful_connections: 0,
+      connections: [],
+    });
+    expect(await query("select * from private.product_events")).toEqual([]);
+  });
+});
+
 describe("one-time demo-preserving administrator reset", () => {
   const resetSql = () =>
     readFileSync(resolve("supabase/admin/reset_non_demo.sql"), "utf8");
@@ -854,7 +1063,7 @@ describe("database privacy and independent posting", () => {
       )[0].role,
     ).toBe("collaborate");
   });
-  it("ranks a teacher above a newer fellow learner while preserving online priority", async () => {
+  it("ranks a teacher above a newer or online fellow learner", async () => {
     const source = await intent(A, "Looking for a guitar tutor");
     const teacher = await intent(B, "I teach guitar and offer lessons", {
       show_in_matches: true,
@@ -880,7 +1089,7 @@ describe("database privacy and independent posting", () => {
     rows = await asUser(A, () =>
       query("select * from public.find_people($1)", [source]),
     );
-    expect(rows.map((r) => (r.profile as { id: string }).id)).toEqual([C, B]);
+    expect(rows.map((r) => (r.profile as { id: string }).id)).toEqual([B, C]);
   });
   it("finds job seekers instead of other hirers and rejects unrelated tutor topics", async () => {
     const source = await intent(A, "Hiring a React developer");

@@ -1,12 +1,15 @@
 import { expect, test } from "@playwright/test";
 
-test("home opens private search instead of a posting timeline", async ({
+test("home introduces the product and examples carry into the discovery workspace", async ({
   page,
 }) => {
   await page.goto("/");
   await expect(
-    page.getByRole("heading", { name: "Find people", exact: true }),
+    page.getByRole("heading", { name: /Find your people/ }),
   ).toBeVisible();
+  await page
+    .getByRole("link", { name: "Explore your next connection" })
+    .click();
   await expect(
     page.getByRole("textbox", { name: "Your intent" }),
   ).toBeVisible();
@@ -18,7 +21,7 @@ test("the legacy intents URL opens the unified workspace", async ({ page }) => {
   await page.goto("/intents");
   await expect(page).toHaveURL(/\/find$/);
   await expect(
-    page.getByRole("heading", { name: "Your intents", exact: true }),
+    page.getByRole("heading", { name: "Your saved intentions", exact: true }),
   ).toBeVisible();
 });
 

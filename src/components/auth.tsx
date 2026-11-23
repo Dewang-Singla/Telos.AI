@@ -130,7 +130,7 @@ export function AuthPage({ mode }: { mode: string }) {
           );
         const result = await db.auth.updateUser({ password });
         if (result.error) throw result.error;
-        window.location.assign("/");
+        window.location.assign("/find");
       } else if (signup) {
         const r = await db.auth.signUp({
           email: email.trim(),
@@ -149,7 +149,7 @@ export function AuthPage({ mode }: { mode: string }) {
         const r = await db.auth.signInWithPassword({ email, password });
         setNeedsVerification(r.error?.code === "email_not_confirmed");
         if (r.error) throw r.error;
-        window.location.assign("/");
+        window.location.assign("/find");
       }
     } catch (e) {
       setError((e as Error).message);

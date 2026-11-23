@@ -1,4 +1,4 @@
-import { Telos } from "@/components/telos";
+import { Welcome } from "@/components/welcome";
 export default function Page() {
-  return <Telos section="find" />;
+  return <Welcome />;
 }

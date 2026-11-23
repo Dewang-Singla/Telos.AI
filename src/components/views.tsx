@@ -861,7 +861,8 @@ export function SettingsView() {
       });
       await api("profile", body);
       await refresh();
-      toast("Saved.");
+      toast("Your profile is ready.");
+      if (!profile) window.location.assign("/find");
     } catch (e) {
       setError((e as Error).message);
     } finally {

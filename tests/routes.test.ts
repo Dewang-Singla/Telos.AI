@@ -48,6 +48,66 @@ afterEach(() => {
   vi.unstubAllGlobals();
 });
 describe("authenticated API boundary", () => {
+  it("validates feedback and delegates writes to the owner-checked database function", async () => {
+    mocks.rpc.mockResolvedValue({ data: true, error: null });
+    const response = await request("match-feedback", {
+      source_id: currentUser,
+      candidate_id: source,
+      candidate_text: "I teach guitar",
+      verdict: "not_relevant",
+      reason: "wrong_role",
+    });
+    expect(response.status).toBe(200);
+    expect(mocks.rpc).toHaveBeenCalledWith("record_match_feedback", {
+      source_uuid: currentUser,
+      candidate_uuid: source,
+      candidate_text: "I teach guitar",
+      verdict_text: "not_relevant",
+      reason_text: "wrong_role",
+    });
+    mocks.rpc.mockClear();
+    expect(
+      (
+        await request("match-feedback", {
+          source_id: currentUser,
+          candidate_id: source,
+          candidate_text: "I teach guitar",
+          verdict: "delete_other_users",
+        })
+      ).status,
+    ).toBe(422);
+    expect(mocks.rpc).not.toHaveBeenCalled();
+  });
+  it("gets progress for the authenticated identity without accepting a requested owner", async () => {
+    mocks.rpc.mockResolvedValue({ data: { active_intents: 1 }, error: null });
+    const response = await GET(
+      new NextRequest(`http://localhost:3000/api/progress?user=${source}`),
+      { params: Promise.resolve({ resource: "progress" }) },
+    );
+    expect(response.status).toBe(200);
+    expect(mocks.rpc).toHaveBeenCalledWith("my_progress");
+    expect(response.headers.get("cache-control")).toContain("no-store");
+  });
+  it("never returns hidden candidates even when a cached AI decision accepts them", async () => {
+    mocks.rpc.mockResolvedValue({
+      data: {
+        source: "I want to learn guitar",
+        candidates: [
+          {
+            profile: { id: source },
+            matched_intent: "I teach guitar",
+            reviewed: true,
+            relevant: true,
+            lexical_confidence: 1,
+            feedback: "not_relevant",
+          },
+        ],
+      },
+      error: null,
+    });
+    const response = await request("matching", { id: currentUser });
+    expect((await response.json()).people).toEqual([]);
+  });
   it("uses cached contextual decisions without another Gemini request and strips retrieval metadata", async () => {
     const fetcher = vi.fn();
     vi.stubGlobal("fetch", fetcher);

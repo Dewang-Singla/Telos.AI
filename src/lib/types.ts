@@ -81,6 +81,27 @@ export type PersonMatch = {
   is_online: boolean;
   distance_km: number | null;
   matched_intent: string | null;
+  explanation?: import("./discovery").MatchExplanation;
+  feedback?: "helpful" | "not_relevant" | null;
+};
+
+export type ProgressSummary = {
+  active_intents: number;
+  saved_intents: number;
+  sent_requests: number;
+  accepted_requests: number;
+  conversations: number;
+  helpful_matches: number;
+  useful_connections: number;
+  connections: {
+    id: string;
+    name: string;
+    username: string;
+    is_demo: boolean;
+    connected_at: string;
+    outcome: "useful" | "not_yet" | "not_a_fit" | null;
+    conversation_id: string | null;
+  }[];
 };
 export type MatchPage = {
   people: PersonMatch[];
